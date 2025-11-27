@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 import os
+import argparse
 from typing import Tuple
 from classical_benchmark import (
     black_scholes_call_analytic,
@@ -57,26 +58,117 @@ def calculate_error(quantum_price: float, classical_price: float) -> Tuple[float
     return abs_error, rel_error
 
 
-def main():
+def parse_arguments():
+    """
+    Parse command-line arguments for simulation parameters.
+    
+    Returns:
+    --------
+    argparse.Namespace
+        Parsed command-line arguments
+    """
+    parser = argparse.ArgumentParser(
+        description='Quantum Option Pricing using Quantum Random Walk',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py
+  python main.py --spot_price 110.0 --strike_price 100.0 --steps 8
+  python main.py --volatility 0.3 --maturity 0.5 --shots 20000
+        """
+    )
+    
+    parser.add_argument(
+        '--spot_price',
+        type=float,
+        default=100.0,
+        help='Current spot price of the underlying asset (default: 100.0)'
+    )
+    
+    parser.add_argument(
+        '--strike_price',
+        type=float,
+        default=100.0,
+        help='Strike price of the option (default: 100.0)'
+    )
+    
+    parser.add_argument(
+        '--risk_free_rate',
+        type=float,
+        default=0.05,
+        help='Risk-free interest rate (default: 0.05, i.e., 5%%)'
+    )
+    
+    parser.add_argument(
+        '--volatility',
+        type=float,
+        default=0.2,
+        help='Volatility of the underlying asset (default: 0.2, i.e., 20%%)'
+    )
+    
+    parser.add_argument(
+        '--maturity',
+        type=float,
+        default=1.0,
+        help='Time to maturity in years (default: 1.0)'
+    )
+    
+    parser.add_argument(
+        '--steps',
+        type=int,
+        default=5,
+        help='Number of time steps (and qubits) (default: 5)'
+    )
+    
+    parser.add_argument(
+        '--shots',
+        type=int,
+        default=10000,
+        help='Number of measurement shots for quantum simulation (default: 10000)'
+    )
+    
+    parser.add_argument(
+        '--output_dir',
+        type=str,
+        default=None,
+        help='Output directory for generated files (default: script directory)'
+    )
+    
+    return parser.parse_args()
+
+
+def main(args=None):
     """
     Main function to run option pricing comparisons.
+    
+    Parameters:
+    -----------
+    args : argparse.Namespace, optional
+        Command-line arguments. If None, arguments will be parsed from command line.
     """
-    # Determine output directory (same directory as this script)
+    # Parse arguments if not provided
+    if args is None:
+        args = parse_arguments()
+    
+    # Determine output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = script_dir
+    if args.output_dir is not None:
+        output_dir = os.path.abspath(args.output_dir)
+    else:
+        output_dir = script_dir
     images_dir = os.path.join(output_dir, 'images')
     
     # Create images directory if it doesn't exist
     os.makedirs(images_dir, exist_ok=True)
     
-    # Default parameters
-    S0 = 100.0  # Spot price
-    K = 100.0   # Strike price
-    r = 0.05    # Risk-free rate (5%)
-    sigma = 0.2 # Volatility (20%)
-    T = 1.0     # Time to maturity (1 year)
-    N = 5       # Number of time steps (and qubits)
-    shots = 10000  # Number of measurement shots for quantum simulation
+    # Get parameters from arguments
+    S0 = args.spot_price
+    K = args.strike_price
+    r = args.risk_free_rate
+    sigma = args.volatility
+    T = args.maturity
+    N = args.steps
+    shots = args.shots
     
     print("\n" + "="*80)
     print("  QUANTUM OPTION PRICING USING QUANTUM RANDOM WALK")
@@ -246,7 +338,7 @@ def main():
     ax1.bar(x + width/2, theoretical_probs, width, label='Theoretical Binomial Distribution', alpha=0.8, color='coral')
     ax1.set_xlabel('Number of Up-Moves (k)', fontsize=12)
     ax1.set_ylabel('Probability', fontsize=12)
-    ax1.set_title('Distribution Comparison: Quantum Random Walk vs Theoretical Binomial', fontsize=14, fontweight='bold')
+    ax1.set_title(f'Distribution Comparison: Quantum Random Walk vs Theoretical Binomial (N={N})', fontsize=14, fontweight='bold')
     ax1.set_xticks(x)
     ax1.set_xticklabels([str(i) for i in range(N + 1)])
     ax1.legend(fontsize=11)
@@ -342,7 +434,30 @@ def main():
     # ========================================================================
     print("\nGenerating results summary...")
     
+    # Build command line string for reproducibility
+    cmd_parts = ['python main.py']
+    cmd_parts.append(f'--spot_price {S0}')
+    cmd_parts.append(f'--strike_price {K}')
+    cmd_parts.append(f'--risk_free_rate {r}')
+    cmd_parts.append(f'--volatility {sigma}')
+    cmd_parts.append(f'--maturity {T}')
+    cmd_parts.append(f'--steps {N}')
+    cmd_parts.append(f'--shots {shots}')
+    if args.output_dir is not None:
+        cmd_parts.append(f'--output_dir {args.output_dir}')
+    command_string = ' '.join(cmd_parts)
+    
     summary_content = f"""# Quantum Option Pricing Results Summary
+
+## How to Reproduce
+
+To reproduce these results, run the following command:
+
+```bash
+{command_string}
+```
+
+Run `python main.py --help` to see all available options.
 
 ## Simulation Parameters
 
@@ -403,5 +518,6 @@ The quantum random walk implementation successfully simulates the binomial tree 
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_arguments()
+    main(args)
 
