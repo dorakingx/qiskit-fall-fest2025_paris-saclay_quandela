@@ -3,4 +3,6 @@ qiskit-aer>=0.13.0
 numpy>=1.21.0
 scipy>=1.7.0
 matplotlib>=3.5.0
+pylatexenc>=2.0
+pillow>=8.0
 

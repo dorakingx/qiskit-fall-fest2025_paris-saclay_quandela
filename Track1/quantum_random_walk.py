@@ -20,7 +20,7 @@ import numpy as np
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector
 from qiskit_aer import AerSimulator
-from qiskit_aer.noise import NoiseModel, depolarizing_error, pauli_error
+from qiskit_aer.noise import NoiseModel, depolarizing_error, pauli_error, ReadoutError
 from typing import Dict, Tuple, Optional
 import math
 
@@ -72,28 +72,48 @@ class QuantumRandomWalk:
         self._build_circuit()
     
     @staticmethod
-    def get_noise_model(error_rate: float) -> NoiseModel:
+    def get_noise_model(error_rate: float, readout_error_rate: float = 0.01) -> NoiseModel:
         """
-        Create a simplified noise model with depolarizing error on single-qubit gates.
+        Create a realistic noise model with depolarizing error on single-qubit gates
+        and readout errors for measurement operations.
         
-        This noise model simulates realistic quantum hardware errors by applying
-        depolarizing noise to all single-qubit gates (primarily R_y rotations).
+        This noise model simulates realistic quantum hardware errors by applying:
+        - Depolarizing noise to all single-qubit gates (primarily R_y rotations)
+        - Readout errors during measurement operations
         
         Parameters:
         -----------
         error_rate : float
             Error rate for depolarizing noise (typically between 0.0 and 1.0)
             Common values: 0.01 (1%), 0.02 (2%), 0.05 (5%), 0.10 (10%)
+        readout_error_rate : float, optional
+            Error rate for readout errors (default: 0.01 or 1%)
+            This simulates measurement errors where:
+            - p(0|0) = 1 - readout_error_rate (correctly measuring |0⟩)
+            - p(1|0) = readout_error_rate (incorrectly measuring |0⟩ as |1⟩)
+            - p(0|1) = readout_error_rate (incorrectly measuring |1⟩ as |0⟩)
+            - p(1|1) = 1 - readout_error_rate (correctly measuring |1⟩)
         
         Returns:
         --------
         NoiseModel
             A NoiseModel object with depolarizing error on single-qubit gates
+            and readout errors on measurement operations
         """
         noise_model = NoiseModel()
         # Add depolarizing error to single-qubit gates
         error = depolarizing_error(error_rate, 1)
         noise_model.add_all_qubit_quantum_error(error, ['ry', 'u1', 'u2', 'u3', 'rz', 'rx'])
+        
+        # Add readout errors (measurement errors)
+        # Create readout error matrix: [[p(0|0), p(1|0)], [p(0|1), p(1|1)]]
+        readout_error_matrix = [
+            [1 - readout_error_rate, readout_error_rate],  # When qubit is |0⟩
+            [readout_error_rate, 1 - readout_error_rate]   # When qubit is |1⟩
+        ]
+        readout_error = ReadoutError(readout_error_matrix)
+        noise_model.add_all_qubit_readout_error(readout_error)
+        
         return noise_model
     
     def _build_circuit(self):
