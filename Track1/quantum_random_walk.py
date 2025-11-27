@@ -20,6 +20,7 @@ import numpy as np
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector
 from qiskit_aer import AerSimulator
+from qiskit_aer.noise import NoiseModel, depolarizing_error, pauli_error
 from typing import Dict, Tuple, Optional
 import math
 
@@ -70,6 +71,31 @@ class QuantumRandomWalk:
         self.circuit = None
         self._build_circuit()
     
+    @staticmethod
+    def get_noise_model(error_rate: float) -> NoiseModel:
+        """
+        Create a simplified noise model with depolarizing error on single-qubit gates.
+        
+        This noise model simulates realistic quantum hardware errors by applying
+        depolarizing noise to all single-qubit gates (primarily R_y rotations).
+        
+        Parameters:
+        -----------
+        error_rate : float
+            Error rate for depolarizing noise (typically between 0.0 and 1.0)
+            Common values: 0.01 (1%), 0.02 (2%), 0.05 (5%), 0.10 (10%)
+        
+        Returns:
+        --------
+        NoiseModel
+            A NoiseModel object with depolarizing error on single-qubit gates
+        """
+        noise_model = NoiseModel()
+        # Add depolarizing error to single-qubit gates
+        error = depolarizing_error(error_rate, 1)
+        noise_model.add_all_qubit_quantum_error(error, ['ry', 'u1', 'u2', 'u3', 'rz', 'rx'])
+        return noise_model
+    
     def _build_circuit(self):
         """
         Build the quantum circuit that prepares the binomial distribution state.
@@ -98,18 +124,16 @@ class QuantumRandomWalk:
         # Prepare the state vector directly (more efficient for small n_steps)
         state_vector = self._prepare_binomial_state_vector()
         
-        # Use Qiskit's StatePreparation (if available) or custom initialization
-        try:
-            from qiskit.circuit.library import StatePreparation
-            # StatePreparation expects normalized state vector
-            prep = StatePreparation(state_vector)
-            self.circuit.append(prep, qreg)
-            self._use_stateprep = True
-        except (ImportError, AttributeError):
-            # Fallback: manually prepare the state using gates
-            # This creates an approximation but works for all Qiskit versions
-            self._prepare_state_manually(state_vector)
-            self._use_stateprep = False
+        # Prefer manual state preparation (O(1) depth, better for NISQ devices)
+        # This uses independent R_y rotations which minimizes noise impact
+        self._prepare_state_manually(state_vector)
+        self._use_stateprep = False
+        
+        # Note: StatePreparation could be used as an alternative, but manual
+        # preparation is preferred for near-term quantum hardware due to:
+        # - Constant depth O(1) regardless of number of qubits
+        # - Reduced noise accumulation
+        # - Better compatibility with NISQ devices
         
         # Add measurements
         self.circuit.measure_all()
@@ -170,21 +194,47 @@ class QuantumRandomWalk:
     
     def _prepare_state_manually(self, state_vector: np.ndarray):
         """
-        Manually prepare the state using quantum gates (fallback method).
+        Manually prepare the state using independent R_y rotations (preferred method for NISQ).
         
-        This is a simplified approach that uses rotations on each qubit.
-        For exact binomial distribution, we would need more complex gates.
+        This method efficiently creates a superposition of all paths in the binomial tree
+        with constant depth O(1), regardless of the number of qubits. Each qubit is
+        independently rotated using an R_y gate, which encodes the risk-neutral probability
+        p for an up-move at each time step.
+        
+        Key Advantages:
+        ---------------
+        - Constant Depth: O(1) circuit depth regardless of width (number of qubits)
+          This is achieved by applying independent rotations in parallel, making it
+          ideal for near-term quantum hardware with limited coherence times.
+        
+        - Noise Resilience: Independent rotations minimize noise accumulation compared
+          to deep, sequential gate operations. Each qubit's state preparation is
+          independent, reducing cross-talk and error propagation.
+        
+        - NISQ Compatibility: The shallow circuit depth and simple gate structure
+          make this approach well-suited for Noisy Intermediate-Scale Quantum (NISQ)
+          devices, where minimizing circuit depth is crucial for maintaining fidelity.
+        
+        - Efficient Path Encoding: This creates a superposition where each qubit
+          independently represents the probability of an up-move, efficiently encoding
+          all possible paths through the binomial tree in a single quantum state.
+        
+        Note: This creates an approximation of the true binomial distribution by using
+        independent probabilities. For exact binomial distribution, more complex entangled
+        gates would be required, but at the cost of increased circuit depth and noise
+        sensitivity. The approximation is suitable for NISQ applications where
+        circuit depth and noise minimization are prioritized.
         
         Parameters:
         -----------
         state_vector : np.ndarray
-            Target state vector
+            Target state vector (used for reference, but independent rotations are applied)
         """
-        # Simplified approach: apply rotations to encode probability p
-        # This creates independent probabilities, approximating the binomial
+        # Apply independent R_y rotations to each qubit
+        # This creates a superposition where P(|1⟩) = p for each qubit independently
+        # Rotation angle: theta = 2 * arccos(sqrt(1-p))
+        # This makes P(|1⟩) = sin²(theta/2) = p
         for i in range(self.n_steps):
-            # Rotation angle: theta = 2 * arccos(sqrt(1-p))
-            # This makes P(|1⟩) = sin²(theta/2) = p
             theta = 2 * np.arccos(np.sqrt(1 - self.p))
             self.circuit.ry(theta, i)
     
@@ -251,7 +301,7 @@ class QuantumRandomWalk:
         """
         return max(self.K - stock_price, 0.0)
     
-    def price_option(self, option_type: str = 'call', shots: int = 10000, use_statevector: bool = False) -> Dict:
+    def price_option(self, option_type: str = 'call', shots: int = 10000, use_statevector: bool = False, noise_model: Optional[NoiseModel] = None) -> Dict:
         """
         Price the option using quantum simulation.
         
@@ -264,6 +314,9 @@ class QuantumRandomWalk:
         use_statevector : bool
             If True, use exact statevector simulation (no sampling error)
             If False, use shot-based sampling
+        noise_model : Optional[NoiseModel]
+            Optional noise model to simulate realistic quantum hardware errors.
+            Only applies to shot-based sampling (ignored if use_statevector=True)
         
         Returns:
         --------
@@ -275,11 +328,11 @@ class QuantumRandomWalk:
             - 'circuit_metrics': Dictionary with circuit depth, qubit count, etc.
         """
         if use_statevector:
-            # Exact calculation using statevector
+            # Exact calculation using statevector (noise not applicable)
             return self._price_option_exact(option_type)
         else:
-            # Shot-based sampling
-            return self._price_option_sampling(option_type, shots)
+            # Shot-based sampling (noise can be applied)
+            return self._price_option_sampling(option_type, shots, noise_model)
     
     def _price_option_exact(self, option_type: str) -> Dict:
         """
@@ -332,7 +385,7 @@ class QuantumRandomWalk:
             'circuit_metrics': circuit_metrics
         }
     
-    def _price_option_sampling(self, option_type: str, shots: int) -> Dict:
+    def _price_option_sampling(self, option_type: str, shots: int, noise_model: Optional[NoiseModel] = None) -> Dict:
         """
         Calculate option price using shot-based sampling.
         
@@ -342,6 +395,8 @@ class QuantumRandomWalk:
             'call' or 'put'
         shots : int
             Number of measurement shots
+        noise_model : Optional[NoiseModel]
+            Optional noise model to simulate realistic quantum hardware errors
         
         Returns:
         --------
@@ -349,7 +404,10 @@ class QuantumRandomWalk:
             Dictionary with sampled option price and metrics
         """
         # Use AerSimulator for shot-based simulation
-        simulator = AerSimulator()
+        if noise_model is not None:
+            simulator = AerSimulator(noise_model=noise_model)
+        else:
+            simulator = AerSimulator()
         
         # Transpile and run
         from qiskit import transpile
@@ -397,17 +455,11 @@ class QuantumRandomWalk:
             return {}
         
         # Remove measurements for depth calculation
+        # Use manual preparation (consistent with _build_circuit default)
         qc_no_measure = QuantumCircuit(self.n_steps)
-        state_vector = self._prepare_binomial_state_vector()
-        try:
-            from qiskit.circuit.library import StatePreparation
-            prep = StatePreparation(state_vector)
-            qc_no_measure.append(prep, range(self.n_steps))
-        except (ImportError, AttributeError):
-            # Use manual preparation
-            for i in range(self.n_steps):
-                theta = 2 * np.arccos(np.sqrt(1 - self.p))
-                qc_no_measure.ry(theta, i)
+        for i in range(self.n_steps):
+            theta = 2 * np.arccos(np.sqrt(1 - self.p))
+            qc_no_measure.ry(theta, i)
         
         return {
             'num_qubits': self.n_steps,

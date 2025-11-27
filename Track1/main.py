@@ -6,6 +6,8 @@ European Call and Put options, then compares the results.
 """
 
 import numpy as np
+import matplotlib.pyplot as plt
+import math
 from typing import Tuple
 from classical_benchmark import (
     black_scholes_call_analytic,
@@ -188,6 +190,119 @@ def main():
     print(f"\n  Quantum vs Classical Binomial Tree:")
     print(f"    Absolute Error: ${abs_error_bt_put:.6f}")
     print(f"    Relative Error: {rel_error_bt_put:.4f}%")
+    
+    # ========================================================================
+    # DEEP DIVE ANALYSIS
+    # ========================================================================
+    print_results_header("DEEP DIVE ANALYSIS")
+    
+    # 1. Distribution Plot: Quantum Measurement Histogram vs Theoretical Binomial Distribution
+    print("\n1. Distribution Comparison: Quantum vs Theoretical Binomial")
+    print("   Generating distribution comparison plot...")
+    
+    # Use existing qrw instance (N=5)
+    # Get measurement counts from the call option result
+    measurement_counts = qrw_call_result['measurement_counts']
+    
+    # Group measurements by number of up-moves (k)
+    quantum_probs = np.zeros(N + 1)
+    total_shots = sum(measurement_counts.values())
+    
+    for measurement, count in measurement_counts.items():
+        k = measurement.count('1')  # Count number of up-moves
+        quantum_probs[k] += count / total_shots
+    
+    # Calculate theoretical binomial probabilities
+    theoretical_probs = np.zeros(N + 1)
+    p = qrw.p  # Risk-neutral probability
+    for k in range(N + 1):
+        theoretical_probs[k] = math.comb(N, k) * (p ** k) * ((1 - p) ** (N - k))
+    
+    # Create bar chart
+    x = np.arange(N + 1)
+    width = 0.35
+    
+    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    ax1.bar(x - width/2, quantum_probs, width, label='Quantum Measurement Histogram', alpha=0.8, color='skyblue')
+    ax1.bar(x + width/2, theoretical_probs, width, label='Theoretical Binomial Distribution', alpha=0.8, color='coral')
+    ax1.set_xlabel('Number of Up-Moves (k)', fontsize=12)
+    ax1.set_ylabel('Probability', fontsize=12)
+    ax1.set_title('Distribution Comparison: Quantum Random Walk vs Theoretical Binomial', fontsize=14, fontweight='bold')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([str(i) for i in range(N + 1)])
+    ax1.legend(fontsize=11)
+    ax1.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('distribution_comparison.png', dpi=300, bbox_inches='tight')
+    print("   Saved: distribution_comparison.png")
+    plt.close()
+    
+    # 2. Scaling Analysis: Qubit count vs Accuracy
+    print("\n2. Scaling Analysis: Number of Steps (Qubits) vs Option Price Error")
+    print("   Running scaling analysis...")
+    
+    N_values = [2, 3, 4, 5, 6, 7, 8]
+    errors = []
+    quantum_prices = []
+    
+    for n_val in N_values:
+        print(f"   Computing for N={n_val}...", end=' ')
+        qrw_scale = QuantumRandomWalk(S0, K, r, sigma, T, n_val)
+        result_scale = qrw_scale.price_option('call', use_statevector=True)
+        quantum_price = result_scale['price']
+        bs_price = black_scholes_call_analytic(S0, K, r, sigma, T)
+        error = abs(quantum_price - bs_price)
+        errors.append(error)
+        quantum_prices.append(quantum_price)
+        print(f"Error: ${error:.6f}")
+    
+    # Create scaling plot
+    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    ax2.plot(N_values, errors, marker='o', linewidth=2, markersize=8, color='steelblue')
+    ax2.set_xlabel('Number of Steps (Qubits)', fontsize=12)
+    ax2.set_ylabel('Option Price Error ($)', fontsize=12)
+    ax2.set_title('Scaling Analysis: Convergence to Black-Scholes Price', fontsize=14, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    ax2.set_xticks(N_values)
+    plt.tight_layout()
+    plt.savefig('scaling_analysis.png', dpi=300, bbox_inches='tight')
+    print("   Saved: scaling_analysis.png")
+    plt.close()
+    
+    # 3. Noise Analysis: Noise Rate vs Calculated Price
+    print("\n3. Noise Analysis: Impact of Quantum Noise on Option Pricing")
+    print("   Running noise analysis...")
+    
+    noise_rates = [0.00, 0.01, 0.02, 0.05, 0.10]
+    noisy_prices = []
+    
+    # Use N=5 for noise analysis
+    qrw_noise = QuantumRandomWalk(S0, K, r, sigma, T, N)
+    bs_price_ref = black_scholes_call_analytic(S0, K, r, sigma, T)
+    
+    for noise_rate in noise_rates:
+        print(f"   Testing noise rate: {noise_rate*100:.1f}%...", end=' ')
+        noise_model = QuantumRandomWalk.get_noise_model(noise_rate)
+        result_noise = qrw_noise.price_option('call', shots=10000, noise_model=noise_model)
+        noisy_price = result_noise['price']
+        noisy_prices.append(noisy_price)
+        print(f"Price: ${noisy_price:.6f}")
+    
+    # Create noise analysis plot
+    fig3, ax3 = plt.subplots(figsize=(10, 6))
+    ax3.plot(noise_rates, noisy_prices, marker='o', linewidth=2, markersize=8, color='darkred', label='Quantum Price with Noise')
+    ax3.axhline(y=bs_price_ref, color='green', linestyle='--', linewidth=2, label=f'True Black-Scholes Price (${bs_price_ref:.6f})')
+    ax3.set_xlabel('Noise Rate', fontsize=12)
+    ax3.set_ylabel('Calculated Price ($)', fontsize=12)
+    ax3.set_title('Noise Analysis: Impact of Quantum Hardware Errors', fontsize=14, fontweight='bold')
+    ax3.legend(fontsize=11)
+    ax3.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('noise_analysis.png', dpi=300, bbox_inches='tight')
+    print("   Saved: noise_analysis.png")
+    plt.close()
+    
+    print("\nDeep Dive Analysis complete! All plots saved.")
     
     # ========================================================================
     # SUMMARY
