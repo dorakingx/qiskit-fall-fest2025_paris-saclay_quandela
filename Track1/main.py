@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import math
 import os
 import argparse
+import time
 from typing import Tuple
 from classical_benchmark import (
     black_scholes_call_analytic,
@@ -211,6 +212,9 @@ def main(args=None):
     # ========================================================================
     print_results_header("QUANTUM RANDOM WALK SIMULATION")
     
+    # Start timing the quantum simulation
+    start_time = time.time()
+    
     # Initialize quantum random walk
     print("\nBuilding quantum circuit...")
     qrw = QuantumRandomWalk(S0, K, r, sigma, T, N)
@@ -260,6 +264,13 @@ def main(args=None):
         stock_price = qrw._state_to_stock_price(measurement)
         payoff = qrw.calculate_payoff_call(stock_price)
         print(f"   {measurement}: Stock=${stock_price:.2f}, Payoff=${payoff:.2f}, Count={count}")
+    
+    # End timing the quantum simulation
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    
+    # Display execution time
+    print(f"\nTotal Simulation Time: {elapsed_time:.2f} seconds")
     
     # ========================================================================
     # COMPARISON AND ERROR ANALYSIS
@@ -470,6 +481,12 @@ Run `python main.py --help` to see all available options.
 | Time to Maturity (T) | {T:.2f} years |
 | Number of Steps (N) | {N} |
 | Quantum Shots | {shots:,} |
+
+## Performance Metrics
+
+| Metric | Value |
+|--------|-------|
+| Execution Time | {elapsed_time:.2f} seconds |
 
 ## Final Comparison Table
 
