@@ -64,6 +64,10 @@ def main():
     # Determine output directory (same directory as this script)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_dir = script_dir
+    images_dir = os.path.join(output_dir, 'images')
+    
+    # Create images directory if it doesn't exist
+    os.makedirs(images_dir, exist_ok=True)
     
     # Default parameters
     S0 = 100.0  # Spot price
@@ -127,9 +131,9 @@ def main():
     # Save circuit diagram as PNG
     print("\nSaving circuit diagram...")
     try:
-        circuit_diagram_path = os.path.join(output_dir, 'circuit_diagram.png')
+        circuit_diagram_path = os.path.join(images_dir, 'circuit_diagram.png')
         circuit.draw(output='mpl', filename=circuit_diagram_path)
-        print("   Saved: circuit_diagram.png")
+        print("   Saved: images/circuit_diagram.png")
     except Exception as e:
         print(f"   Warning: Could not save circuit diagram as PNG ({e})")
         print("   Falling back to text output only.")
@@ -248,8 +252,8 @@ def main():
     ax1.legend(fontsize=11)
     ax1.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'distribution_comparison.png'), dpi=300, bbox_inches='tight')
-    print("   Saved: distribution_comparison.png")
+    plt.savefig(os.path.join(images_dir, 'distribution_comparison.png'), dpi=300, bbox_inches='tight')
+    print("   Saved: images/distribution_comparison.png")
     plt.close()
     
     # 2. Scaling Analysis: Qubit count vs Accuracy
@@ -280,8 +284,8 @@ def main():
     ax2.grid(True, alpha=0.3)
     ax2.set_xticks(N_values)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'scaling_analysis.png'), dpi=300, bbox_inches='tight')
-    print("   Saved: scaling_analysis.png")
+    plt.savefig(os.path.join(images_dir, 'scaling_analysis.png'), dpi=300, bbox_inches='tight')
+    print("   Saved: images/scaling_analysis.png")
     plt.close()
     
     # 3. Noise Analysis: Noise Rate vs Calculated Price
@@ -313,8 +317,8 @@ def main():
     ax3.legend(fontsize=11)
     ax3.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'noise_analysis.png'), dpi=300, bbox_inches='tight')
-    print("   Saved: noise_analysis.png")
+    plt.savefig(os.path.join(images_dir, 'noise_analysis.png'), dpi=300, bbox_inches='tight')
+    print("   Saved: images/noise_analysis.png")
     plt.close()
     
     print("\nDeep Dive Analysis complete! All plots saved.")
