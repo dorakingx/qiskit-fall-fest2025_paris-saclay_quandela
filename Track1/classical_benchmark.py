@@ -106,7 +106,7 @@ def binomial_tree_parameters(S0: float, r: float, sigma: float, T: float, n_step
 
 def binomial_tree_call(S0: float, K: float, r: float, sigma: float, T: float, n_steps: int) -> Dict:
     """
-    Price a European Call option using the Binomial Tree method.
+    Price a European Call option using the Binomial Tree method with backward induction.
     
     Parameters:
     -----------
@@ -130,39 +130,40 @@ def binomial_tree_call(S0: float, K: float, r: float, sigma: float, T: float, n_
         - 'price': Call option price
         - 'payoffs': Array of payoffs at maturity for each possible outcome
         - 'probabilities': Array of probabilities for each outcome
-        - 'tree': Matrix representing the binomial tree
+        - 'tree': None (not stored in backward induction approach)
         - 'parameters': Dictionary with u, d, p, delta_t
     """
     delta_t, u, d, p = binomial_tree_parameters(S0, r, sigma, T, n_steps)
     
-    # Build the binomial tree
-    n_rows = 2 * n_steps + 1
-    n_rows_mid = (n_rows + 1) // 2
-    tree = np.zeros((n_rows, n_steps + 1))
-    tree[n_rows_mid - 1, 0] = S0
+    # Initialize asset prices at maturity
+    # j=0: lowest price (all down moves), j=n_steps: highest price (all up moves)
+    ST = np.array([S0 * (u ** j) * (d ** (n_steps - j)) for j in range(n_steps + 1)])
     
-    # Fill the tree
-    for i in range(1, n_steps + 1):
-        old_idx_non_zero = np.where(tree[:, i - 1] != 0)[0]
-        new_idx_non_zero = np.unique(np.concatenate((old_idx_non_zero + 1, old_idx_non_zero - 1)))
-        new_idx_non_zero = new_idx_non_zero[(new_idx_non_zero >= 0) & (new_idx_non_zero < n_rows)]
-        new_S_val = np.unique(S0 * (u ** (new_idx_non_zero - (n_rows_mid - 1))))
-        tree[new_idx_non_zero, i] = new_S_val
+    # Initialize option values at maturity (payoffs)
+    C = np.maximum(ST - K, 0)
     
-    # Calculate probabilities and payoffs
-    x = np.arange(0, n_steps + 1)
-    vec_prob_payoff = np.array([math.comb(n_steps, k) * (1 - p) ** k * p ** (n_steps - k) for k in x])
-    bool_payoff = np.array([True if i % 2 == 0 else False for i in range(2 * n_steps)])
-    bool_payoff = np.append(bool_payoff, True)
+    # Store payoffs and probabilities for return value
+    vec_payoff = C.copy()
+    vec_prob = np.array([math.comb(n_steps, j) * (p ** j) * ((1 - p) ** (n_steps - j)) for j in range(n_steps + 1)])
     
-    vec_payoff = np.maximum(tree[bool_payoff, n_steps] - K, 0)
-    call_price = np.exp(-r * T) * np.sum(vec_payoff * vec_prob_payoff)
+    # Backward induction: iterate from time step n_steps-1 down to 0
+    discount_factor = np.exp(-r * delta_t)
+    for i in range(n_steps - 1, -1, -1):
+        # At each time step i, we have i+1 nodes (j = 0 to i)
+        # Node j represents j up-moves and (i-j) down-moves
+        # Update option values: C[j] = discount * (p * C[j+1] + (1-p) * C[j])
+        # Note: C[j+1] is the value after an up-move, C[j] is after a down-move
+        for j in range(i + 1):
+            C[j] = discount_factor * (p * C[j + 1] + (1 - p) * C[j])
+    
+    # The option price is C[0] (current node)
+    call_price = C[0]
     
     return {
         'price': float(call_price),
         'payoffs': vec_payoff,
-        'probabilities': vec_prob_payoff,
-        'tree': tree,
+        'probabilities': vec_prob,
+        'tree': None,  # Not stored in backward induction approach
         'parameters': {
             'u': u,
             'd': d,
@@ -174,7 +175,7 @@ def binomial_tree_call(S0: float, K: float, r: float, sigma: float, T: float, n_
 
 def binomial_tree_put(S0: float, K: float, r: float, sigma: float, T: float, n_steps: int) -> Dict:
     """
-    Price a European Put option using the Binomial Tree method.
+    Price a European Put option using the Binomial Tree method with backward induction.
     
     Parameters:
     -----------
@@ -198,39 +199,40 @@ def binomial_tree_put(S0: float, K: float, r: float, sigma: float, T: float, n_s
         - 'price': Put option price
         - 'payoffs': Array of payoffs at maturity for each possible outcome
         - 'probabilities': Array of probabilities for each outcome
-        - 'tree': Matrix representing the binomial tree
+        - 'tree': None (not stored in backward induction approach)
         - 'parameters': Dictionary with u, d, p, delta_t
     """
     delta_t, u, d, p = binomial_tree_parameters(S0, r, sigma, T, n_steps)
     
-    # Build the binomial tree
-    n_rows = 2 * n_steps + 1
-    n_rows_mid = (n_rows + 1) // 2
-    tree = np.zeros((n_rows, n_steps + 1))
-    tree[n_rows_mid - 1, 0] = S0
+    # Initialize asset prices at maturity
+    # j=0: lowest price (all down moves), j=n_steps: highest price (all up moves)
+    ST = np.array([S0 * (u ** j) * (d ** (n_steps - j)) for j in range(n_steps + 1)])
     
-    # Fill the tree
-    for i in range(1, n_steps + 1):
-        old_idx_non_zero = np.where(tree[:, i - 1] != 0)[0]
-        new_idx_non_zero = np.unique(np.concatenate((old_idx_non_zero + 1, old_idx_non_zero - 1)))
-        new_idx_non_zero = new_idx_non_zero[(new_idx_non_zero >= 0) & (new_idx_non_zero < n_rows)]
-        new_S_val = np.unique(S0 * (u ** (new_idx_non_zero - (n_rows_mid - 1))))
-        tree[new_idx_non_zero, i] = new_S_val
+    # Initialize option values at maturity (payoffs for put)
+    P = np.maximum(K - ST, 0)
     
-    # Calculate probabilities and payoffs
-    x = np.arange(0, n_steps + 1)
-    vec_prob_payoff = np.array([math.comb(n_steps, k) * (1 - p) ** k * p ** (n_steps - k) for k in x])
-    bool_payoff = np.array([True if i % 2 == 0 else False for i in range(2 * n_steps)])
-    bool_payoff = np.append(bool_payoff, True)
+    # Store payoffs and probabilities for return value
+    vec_payoff = P.copy()
+    vec_prob = np.array([math.comb(n_steps, j) * (p ** j) * ((1 - p) ** (n_steps - j)) for j in range(n_steps + 1)])
     
-    vec_payoff = np.maximum(K - tree[bool_payoff, n_steps], 0)
-    put_price = np.exp(-r * T) * np.sum(vec_payoff * vec_prob_payoff)
+    # Backward induction: iterate from time step n_steps-1 down to 0
+    discount_factor = np.exp(-r * delta_t)
+    for i in range(n_steps - 1, -1, -1):
+        # At each time step i, we have i+1 nodes (j = 0 to i)
+        # Node j represents j up-moves and (i-j) down-moves
+        # Update option values: P[j] = discount * (p * P[j+1] + (1-p) * P[j])
+        # Note: P[j+1] is the value after an up-move, P[j] is after a down-move
+        for j in range(i + 1):
+            P[j] = discount_factor * (p * P[j + 1] + (1 - p) * P[j])
+    
+    # The option price is P[0] (current node)
+    put_price = P[0]
     
     return {
         'price': float(put_price),
         'payoffs': vec_payoff,
-        'probabilities': vec_prob_payoff,
-        'tree': tree,
+        'probabilities': vec_prob,
+        'tree': None,  # Not stored in backward induction approach
         'parameters': {
             'u': u,
             'd': d,
