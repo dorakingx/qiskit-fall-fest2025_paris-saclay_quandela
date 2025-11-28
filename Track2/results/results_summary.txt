@@ -2,31 +2,31 @@ QUANTUM MACHINE LEARNING RESULTS
 ================================================================================
 
 Model Configuration:
-  n_qubits: 4
+  n_qubits: 8
   circuit_depth: 3
   encoding: angle
   entanglement: linear
-  lookback_window: 4
-  regressor: ridge
+  lookback_window: 6
+  regressor: linear
   use_log_returns: True
   tenor: 30.0
   maturity: 30.0
-  training_samples: 88163
-  test_samples: 22040
+  training_samples: 1595
+  test_samples: 398
 
 Training Metrics:
-  MSE: 0.947745
-  MAE: 0.460720
-  R2: 0.077212
-  RMSE: 0.973522
+  MSE: 0.885856
+  MAE: 0.476698
+  R2: 0.165016
+  RMSE: 0.941199
 
 Test Metrics:
-  MSE: 0.801585
-  MAE: 0.419120
-  R2: 0.100960
-  RMSE: 0.895313
-  MAPE: 1312.7700%
-  MSE_PRICES: 1104017737498742351799244658194364001961253176895352881332169465810318175782432748094243081440286739037469742624091263000835525891421447913472.000000
-  RMSE_PRICES: 33226762368589907336164204138230623487234675212081595227902788602167296.000000
-  MSE_LOG_RETURNS: 0.801585
-  R2_LOG_RETURNS: 0.100960
+  MSE: 0.613269
+  MAE: 0.412030
+  R2: 0.183979
+  RMSE: 0.783115
+  MAPE: 41.5364%
+  MSE_PRICES: 0.259612
+  RMSE_PRICES: 0.509522
+  MSE_LOG_RETURNS: 0.613269
+  R2_LOG_RETURNS: 0.183979

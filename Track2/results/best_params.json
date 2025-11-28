@@ -1,0 +1,32 @@
+{
+  "best_r2": 0.18397884426673117,
+  "best_config": {
+    "data_file": "Train_Dataset_Simulated_Price_swaption.xlsx",
+    "tenor": 30.0,
+    "maturity": 30.0,
+    "use_log_returns": true,
+    "depth": 3,
+    "encoding": "angle",
+    "entanglement": "linear",
+    "normalize_method": "zscore",
+    "test_size": 0.2,
+    "shots": 512,
+    "seed": 42,
+    "output_dir": null,
+    "visualize": false,
+    "verbose": false,
+    "price_column": null,
+    "max_samples": 2000,
+    "n_qubits": 8,
+    "lookback": 6,
+    "data_scaling_factor": 1.5707963267948966,
+    "regressor": "linear"
+  },
+  "best_metrics": {
+    "r2": 0.18397884426673117,
+    "mse": 0.6132693708457798,
+    "mae": 0.41202961510014585,
+    "rmse": 0.783115170869381,
+    "mape": 41.53642355458725
+  }
+}
