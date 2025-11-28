@@ -9,6 +9,7 @@ import numpy as np
 from typing import Optional, Dict, Tuple
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.neural_network import MLPRegressor
+from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from .quantum_reservoir import QuantumReservoir
@@ -36,7 +37,7 @@ class HybridQMLModel:
         quantum_reservoir : QuantumReservoir
             The quantum reservoir instance (non-trainable)
         regressor_type : str, default="linear"
-            Type of classical regressor: "linear", "ridge", or "mlp"
+            Type of classical regressor: "linear", "ridge", "mlp", or "svr"
         regressor_params : dict, optional
             Parameters to pass to the regressor
         """
@@ -66,10 +67,19 @@ class HybridQMLModel:
             }
             default_mlp_params.update(self.regressor_params)
             self.regressor = MLPRegressor(**default_mlp_params)
+        elif regressor_type == "svr":
+            # Default SVR parameters
+            default_svr_params = {
+                "kernel": "rbf",
+                "C": 1.0,
+                "epsilon": 0.1
+            }
+            default_svr_params.update(self.regressor_params)
+            self.regressor = SVR(**default_svr_params)
         else:
             raise ValueError(
                 f"Unknown regressor type: {regressor_type}. "
-                "Supported types: 'linear', 'ridge', 'mlp'"
+                "Supported types: 'linear', 'ridge', 'mlp', 'svr'"
             )
         
         self.is_fitted = False

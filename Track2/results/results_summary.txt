@@ -5,28 +5,28 @@ Model Configuration:
   n_qubits: 8
   circuit_depth: 3
   encoding: angle
-  entanglement: linear
-  lookback_window: 6
-  regressor: linear
+  entanglement: full
+  lookback_window: 8
+  regressor: mlp
   use_log_returns: True
   tenor: 30.0
   maturity: 30.0
-  training_samples: 1595
-  test_samples: 398
+  training_samples: 793
+  test_samples: 198
 
 Training Metrics:
-  MSE: 0.885856
-  MAE: 0.476698
-  R2: 0.165016
-  RMSE: 0.941199
+  MSE: 0.156383
+  MAE: 0.266065
+  R2: 0.840705
+  RMSE: 0.395453
 
 Test Metrics:
-  MSE: 0.613269
-  MAE: 0.412030
-  R2: 0.183979
-  RMSE: 0.783115
-  MAPE: 41.5364%
-  MSE_PRICES: 0.259612
-  RMSE_PRICES: 0.509522
-  MSE_LOG_RETURNS: 0.613269
-  R2_LOG_RETURNS: 0.183979
+  MSE: 0.181427
+  MAE: 0.291887
+  R2: 0.831737
+  RMSE: 0.425943
+  MAPE: 42.7172%
+  MSE_PRICES: 0.333111
+  RMSE_PRICES: 0.577157
+  MSE_LOG_RETURNS: 0.181427
+  R2_LOG_RETURNS: 0.831737

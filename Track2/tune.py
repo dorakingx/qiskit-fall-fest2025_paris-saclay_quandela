@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Dict, Any, List
+import random
 
 from main import run_experiment
 
@@ -54,8 +55,29 @@ def parse_arguments():
     parser.add_argument(
         '--max_samples',
         type=int,
-        default=2000,
-        help='Limit number of samples for quick tuning (default: 2000)'
+        default=1000,
+        help='Limit number of samples for quick tuning (default: 1000)'
+    )
+    
+    parser.add_argument(
+        '--max_combinations',
+        type=int,
+        default=None,
+        help='Maximum number of combinations to test (default: test all, or use smart sampling)'
+    )
+    
+    parser.add_argument(
+        '--smart_sampling',
+        action='store_true',
+        default=True,
+        help='Use smart sampling: prioritize promising configurations based on previous best results (default: True)'
+    )
+    
+    parser.add_argument(
+        '--no_smart_sampling',
+        dest='smart_sampling',
+        action='store_false',
+        help='Disable smart sampling (test all combinations)'
     )
     
     return parser.parse_args()
@@ -149,6 +171,89 @@ def plot_tuning_results(all_results: List[Dict[str, Any]], results_dir: Path) ->
     plt.close()
 
 
+def prioritize_combinations(valid_combinations, search_space, base_scaling, best_params_path=None):
+    """
+    Prioritize combinations based on previous best results or heuristics.
+    Returns a sorted list with most promising configurations first.
+    
+    Parameters
+    ----------
+    valid_combinations : list
+        List of valid parameter combinations
+    search_space : dict
+        Search space definition
+    base_scaling : float
+        Base scaling factor
+    best_params_path : Path, optional
+        Path to previous best_params.json file
+    
+    Returns
+    -------
+    list
+        Prioritized list of combinations
+    """
+    # Try to load previous best parameters
+    best_config = None
+    if best_params_path and best_params_path.exists():
+        try:
+            with open(best_params_path, 'r') as f:
+                best_data = json.load(f)
+                best_config = best_data.get('best_config', {})
+        except:
+            pass
+    
+    # Score each combination based on proximity to best config
+    scored_combinations = []
+    for combo in valid_combinations:
+        n_qubits, lookback, depth, entanglement, scaling_mult, regressor = combo
+        score = 0
+        
+        if best_config:
+            # Prioritize configurations similar to best known config
+            if n_qubits == best_config.get('n_qubits', 8):
+                score += 10
+            if lookback == best_config.get('lookback', 6):
+                score += 10
+            if depth == best_config.get('depth', 3):
+                score += 5
+            if entanglement == best_config.get('entanglement', 'linear'):
+                score += 5
+            if regressor == best_config.get('regressor', 'linear'):
+                score += 5
+            
+            # Prioritize similar scaling factors
+            best_scaling = best_config.get('data_scaling_factor', 1.5708)
+            current_scaling = scaling_mult * base_scaling
+            scaling_diff = abs(best_scaling - current_scaling) / best_scaling
+            score += max(0, 10 * (1 - scaling_diff))
+        
+        # Heuristics: prefer moderate complexity
+        # Higher qubits and lookback are generally better
+        score += n_qubits * 2
+        score += lookback
+        
+        # Moderate depth (4-6) often works well
+        if depth in [4, 6]:
+            score += 3
+        elif depth == 3:
+            score += 2
+        
+        # Linear entanglement is faster, but circular/full might be better
+        if entanglement == 'linear':
+            score += 1  # Slight preference for speed
+        
+        # Non-linear regressors might capture more patterns
+        if regressor in ['mlp', 'svr']:
+            score += 2
+        
+        scored_combinations.append((score, combo))
+    
+    # Sort by score (highest first)
+    scored_combinations.sort(key=lambda x: x[0], reverse=True)
+    
+    return [combo for _, combo in scored_combinations]
+
+
 def main():
     """Perform grid search hyperparameter tuning."""
     # Parse command-line arguments
@@ -160,9 +265,7 @@ def main():
         'tenor': args.tenor,
         'maturity': args.maturity,
         'use_log_returns': True,
-        'depth': 3,
         'encoding': 'angle',
-        'entanglement': 'linear',
         'normalize_method': 'zscore',
         'test_size': 0.2,
         'shots': 512,
@@ -176,10 +279,12 @@ def main():
     
     # Define search space
     search_space = {
-        'n_qubits': [4, 6, 8],
-        'lookback': [4, 6, 8],
-        'data_scaling_factor': [0.5, 1.0, 1.5, 2.0],
-        'regressor': ['ridge', 'linear']
+        'n_qubits': [6, 8],
+        'lookback': [6, 8, 12],
+        'depth': [3, 4, 6],
+        'entanglement': ['linear', 'circular', 'full'],
+        'data_scaling_factor': [1.0, 1.5, 2.0],
+        'regressor': ['ridge', 'mlp', 'svr']
     }
     
     # Base scaling factor (np.pi / 3.0)
@@ -191,6 +296,8 @@ def main():
     print(f"\nSearch Space:")
     print(f"  n_qubits: {search_space['n_qubits']}")
     print(f"  lookback: {search_space['lookback']}")
+    print(f"  depth: {search_space['depth']}")
+    print(f"  entanglement: {search_space['entanglement']}")
     print(f"  data_scaling_factor multipliers: {search_space['data_scaling_factor']}")
     print(f"  regressor: {search_space['regressor']}")
     print(f"\nFixed Parameters:")
@@ -201,11 +308,13 @@ def main():
     all_combinations = list(itertools.product(
         search_space['n_qubits'],
         search_space['lookback'],
+        search_space['depth'],
+        search_space['entanglement'],
         search_space['data_scaling_factor'],
         search_space['regressor']
     ))
     
-    # Filter invalid combinations (lookback > n_qubits)
+    # Filter invalid combinations (lookback > n_qubits for angle encoding)
     valid_combinations = [
         combo for combo in all_combinations
         if combo[1] <= combo[0]  # lookback <= n_qubits
@@ -223,8 +332,31 @@ def main():
     # Results storage
     all_results = []
     
-    # Grid search loop
-    for idx, (n_qubits, lookback, scaling_mult, regressor) in enumerate(valid_combinations, 1):
+    # Smart sampling: prioritize promising configurations
+    if args.smart_sampling:
+        results_dir = Path(__file__).parent / 'results'
+        best_params_path = results_dir / 'best_params.json'
+        prioritized_combinations = prioritize_combinations(
+            valid_combinations, search_space, base_scaling, best_params_path
+        )
+        print(f"\nUsing smart sampling: prioritizing {len(prioritized_combinations)} configurations")
+        print("  (Configurations similar to previous best results are tested first)")
+    else:
+        prioritized_combinations = valid_combinations
+        print(f"\nTesting all {len(prioritized_combinations)} combinations in order")
+    
+    # Limit number of combinations if specified
+    if args.max_combinations is not None and args.max_combinations < len(prioritized_combinations):
+        prioritized_combinations = prioritized_combinations[:args.max_combinations]
+        print(f"Limited to first {args.max_combinations} prioritized combinations")
+    
+    print(f"\nTotal configurations to test: {len(prioritized_combinations)}")
+    print("\n" + "="*80)
+    print("  STARTING SEQUENTIAL GRID SEARCH (CPU-friendly)")
+    print("="*80)
+    
+    # Sequential grid search loop (no parallelization to reduce CPU load)
+    for idx, (n_qubits, lookback, depth, entanglement, scaling_mult, regressor) in enumerate(prioritized_combinations, 1):
         # Calculate actual scaling factor
         data_scaling_factor = scaling_mult * base_scaling
         
@@ -233,18 +365,22 @@ def main():
         config.update({
             'n_qubits': n_qubits,
             'lookback': lookback,
+            'depth': depth,
+            'entanglement': entanglement,
             'data_scaling_factor': data_scaling_factor,
             'regressor': regressor
         })
         
-        print(f"\n[{idx}/{len(valid_combinations)}] Testing configuration:")
+        print(f"\n[{idx}/{len(prioritized_combinations)}] Testing configuration:")
         print(f"  n_qubits: {n_qubits}")
         print(f"  lookback: {lookback}")
+        print(f"  depth: {depth}")
+        print(f"  entanglement: {entanglement}")
         print(f"  data_scaling_factor: {data_scaling_factor:.4f} (multiplier: {scaling_mult})")
         print(f"  regressor: {regressor}")
         
         try:
-            # Run experiment
+            # Run experiment sequentially
             metrics = run_experiment(config)
             
             r2 = metrics['r2']
@@ -277,6 +413,8 @@ def main():
         print(f"\nBest Configuration (R² = {best_r2:.6f}):")
         print(f"  n_qubits: {best_config['n_qubits']}")
         print(f"  lookback: {best_config['lookback']}")
+        print(f"  depth: {best_config['depth']}")
+        print(f"  entanglement: {best_config['entanglement']}")
         print(f"  data_scaling_factor: {best_config['data_scaling_factor']:.6f}")
         print(f"  regressor: {best_config['regressor']}")
         print(f"\nBest Metrics:")
