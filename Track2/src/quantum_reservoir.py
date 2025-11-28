@@ -144,13 +144,16 @@ class QuantumReservoir:
         circuit: Optional[QuantumCircuit] = None
     ) -> QuantumCircuit:
         """
-        Encode classical data into quantum circuit.
+        Encode classical data sequence into quantum circuit.
+        
+        This method encodes the full sequence of data points to preserve temporal
+        information. For angle encoding, elements are mapped 1-to-1 to qubits.
         
         Parameters
         ----------
         data : np.ndarray
-            Input data to encode. Shape should match encoding requirements:
-            - Angle encoding: 1D array of length n_qubits
+            Input data sequence to encode. Can be of any length:
+            - Angle encoding: 1D array (will be truncated/padded to n_qubits)
             - Amplitude encoding: 1D array of length 2^n_qubits
         circuit : QuantumCircuit, optional
             Circuit to encode into. If None, creates a new circuit.
@@ -158,7 +161,7 @@ class QuantumReservoir:
         Returns
         -------
         QuantumCircuit
-            Circuit with encoded data
+            Circuit with encoded data sequence
         """
         if circuit is None:
             circuit = QuantumCircuit(self.n_qubits)
@@ -169,17 +172,19 @@ class QuantumReservoir:
         data = np.asarray(data).flatten()
         
         if self.encoding_type == "angle":
-            # Angle encoding: map each data point to rotation angle
+            # Angle encoding: map sequence of data points 1-to-1 to rotation angles
+            # This preserves temporal information by encoding the full sequence
             if len(data) != self.n_qubits:
-                # If data length doesn't match, pad or truncate
+                # Handle length mismatches
                 if len(data) < self.n_qubits:
-                    # Pad with zeros
+                    # Pad with zeros (older history is zero-padded)
                     data = np.pad(data, (0, self.n_qubits - len(data)), 'constant')
                 else:
-                    # Truncate or average
-                    data = data[:self.n_qubits]
+                    # Take last n_qubits values (most recent history)
+                    # This ensures we capture the most recent temporal patterns
+                    data = data[-self.n_qubits:]
             
-            # Normalize data to [0, 2π] range
+            # Normalize data to [0, 2π] range for rotation angles
             if np.max(np.abs(data)) > 0:
                 data_normalized = (data - np.min(data)) / (
                     np.max(data) - np.min(data) + 1e-8
@@ -187,7 +192,8 @@ class QuantumReservoir:
             else:
                 data_normalized = data
             
-            # Apply rotation gates
+            # Apply rotation gates: map each sequence element to a qubit
+            # This creates a 1-to-1 mapping preserving temporal order
             for qubit in range(self.n_qubits):
                 circuit.ry(data_normalized[qubit], qubit)
         
@@ -261,14 +267,13 @@ class QuantumReservoir:
         reservoir_states = []
         
         for i in range(n_samples):
-            # Average over the lookback window for encoding
+            # Extract the full sequence from the lookback window
+            # This preserves temporal information instead of aggregating to a single scalar
             window_data = data[i]
             
-            # Use mean of window for encoding (can be modified)
-            encoding_data = np.mean(window_data) if len(window_data) > 1 else window_data[0]
-            
-            # Create encoding circuit
-            encoding_circuit = self.encode_data([encoding_data] * self.n_qubits)
+            # Pass the full sequence to encoding (preserves temporal dynamics)
+            # The encode_data method will handle length mismatches appropriately
+            encoding_circuit = self.encode_data(window_data)
             
             # Combine with reservoir circuit
             full_circuit = QuantumCircuit(self.n_qubits)

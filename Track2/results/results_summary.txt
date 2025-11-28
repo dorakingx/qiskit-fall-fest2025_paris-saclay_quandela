@@ -6,24 +6,24 @@ Model Configuration:
   circuit_depth: 3
   encoding: angle
   entanglement: linear
-  lookback_window: 10
-  regressor: linear
-  use_log_returns: False
+  lookback_window: 4
+  regressor: ridge
+  use_log_returns: True
   tenor: 30.0
   maturity: 30.0
-  training_samples: 88159
-  test_samples: 22039
+  training_samples: 88163
+  test_samples: 22040
 
 Training Metrics:
-  MSE: 0.046493
-  MAE: 0.184079
-  R2: 0.000000
-  RMSE: 0.215622
-  MAPE: 116.1694%
+  MSE: 1.015632
+  MAE: 0.451258
+  R2: 0.011113
+  RMSE: 1.007786
+  MAPE: 397.3335%
 
 Test Metrics:
-  MSE: 0.042273
-  MAE: 0.173652
-  R2: -0.018940
-  RMSE: 0.205604
-  MAPE: 163.8035%
+  MSE: 0.880244
+  MAE: 0.425635
+  R2: 0.012737
+  RMSE: 0.938213
+  MAPE: 293.4612%

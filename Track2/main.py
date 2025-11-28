@@ -63,14 +63,24 @@ Examples:
     parser.add_argument(
         '--use_log_returns',
         action='store_true',
-        help='Use log returns instead of raw prices'
+        help='Use log returns instead of raw prices (default: True, recommended for stationarity)'
     )
+    
+    parser.add_argument(
+        '--no_log_returns',
+        dest='use_log_returns',
+        action='store_false',
+        help='Disable log returns (use raw prices)'
+    )
+    
+    # Set default to True for use_log_returns
+    parser.set_defaults(use_log_returns=True)
     
     parser.add_argument(
         '--lookback',
         type=int,
-        default=10,
-        help='Lookback window size for time-series (default: 10)'
+        default=4,
+        help='Lookback window size for time-series (default: 4, aligned with n_qubits)'
     )
     
     parser.add_argument(
@@ -122,18 +132,18 @@ Examples:
     parser.add_argument(
         '--regressor',
         type=str,
-        default='linear',
+        default='ridge',
         choices=['linear', 'ridge', 'mlp'],
-        help='Type of classical regressor: linear, ridge, or mlp (default: linear)'
+        help='Type of classical regressor: linear, ridge, or mlp (default: ridge)'
     )
     
     # Normalization
     parser.add_argument(
         '--normalize_method',
         type=str,
-        default='minmax',
+        default='zscore',
         choices=['minmax', 'zscore'],
-        help='Normalization method (default: minmax)'
+        help='Normalization method (default: zscore, better for log returns)'
     )
     
     # Output parameters
@@ -433,6 +443,16 @@ def main():
     )
     
     print(f"Reservoir circuit depth: {quantum_reservoir.get_circuit_depth()}")
+    
+    # Warn if lookback > n_qubits with angle encoding (older history will be truncated)
+    if args.encoding == 'angle' and args.lookback > args.n_qubits:
+        warnings.warn(
+            f"Lookback window ({args.lookback}) > number of qubits ({args.n_qubits}). "
+            f"With angle encoding, only the last {args.n_qubits} values will be used. "
+            f"Older history will be truncated. Consider setting lookback={args.n_qubits} "
+            f"for 1-to-1 mapping without information loss.",
+            UserWarning
+        )
     
     # Visualize circuit if requested
     if args.visualize:

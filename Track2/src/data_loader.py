@@ -739,8 +739,9 @@ class DataLoader:
         if use_log_returns:
             try:
                 prices = self.compute_log_returns(prices)
-                # Note: log returns has one less element, so we need to adjust
-                # For windowing, we'll use the log returns directly
+                # Note: log returns has length len(original_prices) - 1
+                # create_windows() handles this correctly by starting from lookback_window index
+                # This means we'll have one fewer window, which is expected and correct
             except ValueError as e:
                 warnings.warn(
                     f"Could not compute log returns: {e}. Using raw prices instead.",
