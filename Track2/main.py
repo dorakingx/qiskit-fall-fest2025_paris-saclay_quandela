@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Optional
+import warnings
 
 from src.data_loader import DataLoader
 from src.quantum_reservoir import QuantumReservoir
@@ -358,6 +359,46 @@ def main():
         raise FileNotFoundError(f"Data file not found: {data_file}")
     
     print(f"Loading data from: {data_file}")
+    
+    # Check for available Tenor/Maturity pairs (Swaption format)
+    try:
+        available_pairs = data_loader.get_available_pairs(data_file)
+        if len(available_pairs) > 0:
+            print(f"\nAvailable (Tenor, Maturity) pairs in dataset: {len(available_pairs)}")
+            for i, (t, m) in enumerate(available_pairs[:10]):  # Show first 10
+                print(f"  {i+1}. Tenor={t}, Maturity={m}")
+            if len(available_pairs) > 10:
+                print(f"  ... and {len(available_pairs) - 10} more pairs")
+            
+            # Validate requested pair
+            if args.tenor is not None and args.maturity is not None:
+                matching_pair = None
+                for (t, m) in available_pairs:
+                    if (abs(t - args.tenor) < 1e-6 and abs(m - args.maturity) < 1e-6):
+                        matching_pair = (t, m)
+                        break
+                
+                if matching_pair is None:
+                    print(f"\nWARNING: Requested pair (Tenor={args.tenor}, Maturity={args.maturity}) not found!")
+                    print("Available pairs:")
+                    for (t, m) in available_pairs:
+                        print(f"  - Tenor={t}, Maturity={m}")
+                    raise ValueError(
+                        f"Tenor={args.tenor}, Maturity={args.maturity} not found in dataset"
+                    )
+                else:
+                    print(f"\nUsing pair: Tenor={matching_pair[0]}, Maturity={matching_pair[1]}")
+            elif args.tenor is not None or args.maturity is not None:
+                print("\nWARNING: Both --tenor and --maturity must be specified for Swaption data")
+                print("Available pairs:")
+                for (t, m) in available_pairs:
+                    print(f"  - Tenor={t}, Maturity={m}")
+    except Exception as e:
+        # Not Swaption format or error parsing, continue with standard format
+        if "Swaption" in str(e) or "parse" in str(e).lower():
+            warnings.warn(f"Could not parse Swaption format: {e}", UserWarning)
+        pass
+    
     if args.tenor is not None or args.maturity is not None:
         print(f"Filtering for Tenor={args.tenor}, Maturity={args.maturity}")
     if args.use_log_returns:
@@ -472,6 +513,13 @@ def main():
             y_test, y_test_pred,
             title="Test Set: Predictions vs Actual",
             save_path=output_dir / 'test_predictions.png'
+        )
+        
+        # Main prediction plot (test set) - saved as prediction_plot.png
+        plot_predictions(
+            y_test, y_test_pred,
+            title="Predicted vs Actual Prices",
+            save_path=output_dir / 'prediction_plot.png'
         )
         
         # Residuals

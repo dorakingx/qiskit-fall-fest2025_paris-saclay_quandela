@@ -7,9 +7,10 @@ and creating time-series windows for quantum machine learning.
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional, Union
+from typing import Tuple, Optional, Union, Dict, List
 from pathlib import Path
 import warnings
+import re
 
 
 class DataLoader:
@@ -55,16 +56,141 @@ class DataLoader:
         if random_seed is not None:
             np.random.seed(random_seed)
     
+    def parse_swaption_data(
+        self,
+        file_path: Union[str, Path]
+    ) -> Dict[Tuple[float, float], List[float]]:
+        """
+        Parse Swaption data file with text-based format.
+        
+        Expected format:
+        - Lines like "Tenor : 1; Maturity : 0.5" followed by price sequences
+        - Prices continue until next header or EOF
+        
+        Parameters
+        ----------
+        file_path : str or Path
+            Path to the Swaption data file
+        
+        Returns
+        -------
+        Dict[Tuple[float, float], List[float]]
+            Dictionary mapping (tenor, maturity) tuples to price lists
+        """
+        file_path = Path(file_path)
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Read Excel file without header to preserve text structure
+        if file_path.suffix in ['.xlsx', '.xls']:
+            # Read as raw data, preserving all cells
+            df_raw = pd.read_excel(file_path, header=None)
+        else:
+            raise ValueError(
+                f"Swaption format parsing only supports Excel files. "
+                f"Got: {file_path.suffix}"
+            )
+        
+        # Convert to string representation for regex matching
+        # Flatten the dataframe to a list of strings
+        data_dict = {}
+        current_tenor = None
+        current_maturity = None
+        current_prices = []
+        
+        # Regex pattern to match "Tenor : X; Maturity : Y"
+        pattern = re.compile(
+            r'Tenor\s*:\s*(\d+(?:\.\d+)?)\s*;\s*Maturity\s*:\s*(\d+(?:\.\d+)?)',
+            re.IGNORECASE
+        )
+        
+        # Iterate through all cells in the dataframe
+        for row_idx in range(len(df_raw)):
+            for col_idx in range(len(df_raw.columns)):
+                cell_value = df_raw.iloc[row_idx, col_idx]
+                
+                # Skip NaN/empty cells
+                if pd.isna(cell_value):
+                    continue
+                
+                cell_str = str(cell_value).strip()
+                
+                # Check if this cell matches the Tenor/Maturity pattern
+                match = pattern.search(cell_str)
+                if match:
+                    # Save previous pair if exists
+                    if current_tenor is not None and current_maturity is not None:
+                        if len(current_prices) > 0:
+                            data_dict[(current_tenor, current_maturity)] = current_prices
+                    
+                    # Start new pair
+                    current_tenor = float(match.group(1))
+                    current_maturity = float(match.group(2))
+                    current_prices = []
+                
+                # Try to parse as float (price value)
+                elif current_tenor is not None and current_maturity is not None:
+                    try:
+                        price = float(cell_str)
+                        if not np.isnan(price) and np.isfinite(price):
+                            current_prices.append(price)
+                    except (ValueError, TypeError):
+                        # Not a valid price, skip
+                        pass
+        
+        # Save last pair
+        if current_tenor is not None and current_maturity is not None:
+            if len(current_prices) > 0:
+                data_dict[(current_tenor, current_maturity)] = current_prices
+        
+        return data_dict
+    
+    def get_available_pairs(
+        self,
+        file_path: Union[str, Path]
+    ) -> List[Tuple[float, float]]:
+        """
+        Get all available (Tenor, Maturity) pairs from Swaption data file.
+        
+        Parameters
+        ----------
+        file_path : str or Path
+            Path to the Swaption data file
+        
+        Returns
+        -------
+        List[Tuple[float, float]]
+            List of (tenor, maturity) tuples
+        """
+        file_path = Path(file_path)
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Try to parse as Swaption format
+        if file_path.suffix in ['.xlsx', '.xls']:
+            try:
+                swaption_data = self.parse_swaption_data(file_path)
+                return list(swaption_data.keys())
+            except Exception:
+                # Not Swaption format, return empty list
+                return []
+        
+        return []
+    
     def load_data(
         self,
         file_path: Union[str, Path],
         price_column: Optional[str] = None,
-        date_column: Optional[str] = None
+        date_column: Optional[str] = None,
+        target_tenor: Optional[float] = None,
+        target_maturity: Optional[float] = None
     ) -> pd.DataFrame:
         """
         Load data from Excel or CSV file.
         
-        Supports both grid format (Tenor × Maturity matrix) and list format.
+        Supports both Swaption text-based format and standard table format.
         
         Parameters
         ----------
@@ -74,6 +200,10 @@ class DataLoader:
             Name of the price column. If None, will try to auto-detect.
         date_column : str, optional
             Name of the date column. If None, will try to auto-detect.
+        target_tenor : float, optional
+            Tenor value to extract (for Swaption format)
+        target_maturity : float, optional
+            Maturity value to extract (for Swaption format)
         
         Returns
         -------
@@ -85,7 +215,68 @@ class DataLoader:
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         
-        # Load based on file extension
+        # Try to detect Swaption format first
+        if file_path.suffix in ['.xlsx', '.xls']:
+            # Read a sample to check format
+            df_sample = pd.read_excel(file_path, header=None, nrows=50)
+            sample_text = df_sample.to_string()
+            
+            # Check if it contains Swaption format pattern
+            swaption_pattern = re.compile(
+                r'Tenor\s*:\s*\d+(?:\.\d+)?\s*;\s*Maturity\s*:\s*\d+(?:\.\d+)?',
+                re.IGNORECASE
+            )
+            
+            is_swaption_format = swaption_pattern.search(sample_text) is not None
+            
+            if is_swaption_format:
+                # Parse Swaption format
+                swaption_data = self.parse_swaption_data(file_path)
+                
+                # If target pair specified, extract it
+                if target_tenor is not None and target_maturity is not None:
+                    # Find matching pair (with tolerance for floating point)
+                    matching_pair = None
+                    for (t, m), prices in swaption_data.items():
+                        if (abs(t - target_tenor) < 1e-6 and 
+                            abs(m - target_maturity) < 1e-6):
+                            matching_pair = (t, m)
+                            break
+                    
+                    if matching_pair is None:
+                        available_pairs = list(swaption_data.keys())
+                        raise ValueError(
+                            f"No data found for Tenor={target_tenor}, "
+                            f"Maturity={target_maturity}. "
+                            f"Available pairs: {available_pairs}"
+                        )
+                    
+                    prices = swaption_data[matching_pair]
+                    # Create DataFrame with sequential index (as time steps)
+                    df = pd.DataFrame({
+                        'Price': prices
+                    })
+                    df.index.name = 'TimeStep'
+                    return df
+                else:
+                    # Return all pairs info or first pair
+                    if len(swaption_data) == 0:
+                        raise ValueError("No Swaption data found in file")
+                    
+                    # Use first pair if not specified
+                    first_pair = list(swaption_data.keys())[0]
+                    prices = swaption_data[first_pair]
+                    df = pd.DataFrame({
+                        'Price': prices
+                    })
+                    df.index.name = 'TimeStep'
+                    warnings.warn(
+                        f"No target Tenor/Maturity specified. Using first pair: {first_pair}",
+                        UserWarning
+                    )
+                    return df
+        
+        # Standard format loading
         if file_path.suffix in ['.xlsx', '.xls']:
             df = pd.read_excel(file_path)
         elif file_path.suffix == '.csv':
@@ -203,7 +394,12 @@ class DataLoader:
         
         return df
     
-    def compute_log_returns(self, prices: np.ndarray) -> np.ndarray:
+    def compute_log_returns(
+        self, 
+        prices: np.ndarray,
+        clip_extreme: bool = True,
+        clip_threshold: float = 5.0
+    ) -> np.ndarray:
         """
         Compute log returns from price series: ln(P_t / P_{t-1}).
         
@@ -213,6 +409,10 @@ class DataLoader:
         ----------
         prices : np.ndarray
             Price series (1D array)
+        clip_extreme : bool, default=True
+            If True, clip extreme log returns to prevent outliers
+        clip_threshold : float, default=5.0
+            Threshold for clipping (in standard deviations)
         
         Returns
         -------
@@ -221,15 +421,58 @@ class DataLoader:
         """
         prices = np.asarray(prices).flatten()
         
+        # Handle NaN and infinite values
+        if np.any(np.isnan(prices)) or np.any(np.isinf(prices)):
+            # Forward fill NaN values
+            mask_valid = ~(np.isnan(prices) | np.isinf(prices))
+            if np.sum(mask_valid) == 0:
+                raise ValueError("No valid prices found (all NaN or Inf)")
+            
+            # Use forward fill for NaN (handle deprecated method parameter)
+            prices_series = pd.Series(prices)
+            prices_filled = prices_series.ffill().bfill()
+            prices = prices_filled.values
+        
         # Ensure all prices are positive
         if np.any(prices <= 0):
-            raise ValueError(
-                "Cannot compute log returns: prices must be positive. "
-                f"Found {np.sum(prices <= 0)} non-positive values."
-            )
+            # Replace zero/negative with small positive value
+            min_positive = np.min(prices[prices > 0])
+            if min_positive > 0:
+                prices = np.where(prices <= 0, min_positive, prices)
+                warnings.warn(
+                    f"Found {np.sum(prices <= 0)} non-positive prices. "
+                    "Replaced with minimum positive value.",
+                    UserWarning
+                )
+            else:
+                raise ValueError(
+                    "Cannot compute log returns: all prices are non-positive."
+                )
         
         # Compute log returns: ln(P_t / P_{t-1})
         log_returns = np.log(prices[1:] / prices[:-1])
+        
+        # Handle NaN/Inf in log returns
+        if np.any(np.isnan(log_returns)) or np.any(np.isinf(log_returns)):
+            # Replace NaN/Inf with 0 or forward fill
+            log_returns = np.where(
+                np.isnan(log_returns) | np.isinf(log_returns),
+                0.0,
+                log_returns
+            )
+            warnings.warn(
+                "Found NaN/Inf in log returns. Replaced with 0.",
+                UserWarning
+            )
+        
+        # Clip extreme values if requested
+        if clip_extreme:
+            mean_lr = np.mean(log_returns)
+            std_lr = np.std(log_returns)
+            if std_lr > 0:
+                lower_bound = mean_lr - clip_threshold * std_lr
+                upper_bound = mean_lr + clip_threshold * std_lr
+                log_returns = np.clip(log_returns, lower_bound, upper_bound)
         
         return log_returns
     
@@ -464,10 +707,16 @@ class DataLoader:
         Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
             X_train, X_test, y_train, y_test
         """
-        # Load data
-        df = self.load_data(file_path, price_column, date_column)
+        # Load data (with Tenor/Maturity filtering if specified)
+        df = self.load_data(
+            file_path, 
+            price_column, 
+            date_column,
+            target_tenor=tenor,
+            target_maturity=maturity
+        )
         
-        # Filter by Tenor/Maturity if specified
+        # Additional filtering if needed (for standard format)
         if tenor is not None or maturity is not None:
             df = self.select_tenor_maturity(df, tenor, maturity)
             if len(df) == 0:

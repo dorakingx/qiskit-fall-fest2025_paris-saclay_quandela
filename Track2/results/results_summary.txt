@@ -1,0 +1,29 @@
+QUANTUM MACHINE LEARNING RESULTS
+================================================================================
+
+Model Configuration:
+  n_qubits: 4
+  circuit_depth: 3
+  encoding: angle
+  entanglement: linear
+  lookback_window: 10
+  regressor: linear
+  use_log_returns: False
+  tenor: 30.0
+  maturity: 30.0
+  training_samples: 88159
+  test_samples: 22039
+
+Training Metrics:
+  MSE: 0.046493
+  MAE: 0.184079
+  R2: 0.000000
+  RMSE: 0.215622
+  MAPE: 116.1694%
+
+Test Metrics:
+  MSE: 0.042273
+  MAE: 0.173652
+  R2: -0.018940
+  RMSE: 0.205604
+  MAPE: 163.8035%

@@ -9,8 +9,18 @@ import numpy as np
 from typing import Optional
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
 import warnings
+
+# Try to import AerSimulator, fallback to Statevector simulation if not available
+try:
+    from qiskit_aer import AerSimulator
+    HAS_AER = True
+except ImportError:
+    HAS_AER = False
+    warnings.warn(
+        "qiskit-aer not available. Using Statevector simulation instead.",
+        UserWarning
+    )
 
 
 class QuantumReservoir:
@@ -65,10 +75,13 @@ class QuantumReservoir:
         self.circuit: Optional[QuantumCircuit] = None
         
         # Initialize simulator with noise model if provided
-        if noise_model is not None:
-            self.simulator = AerSimulator(noise_model=noise_model)
+        if HAS_AER:
+            if noise_model is not None:
+                self.simulator = AerSimulator(noise_model=noise_model)
+            else:
+                self.simulator = AerSimulator()
         else:
-            self.simulator = AerSimulator()
+            self.simulator = None  # Will use Statevector simulation
         
         # Build the reservoir circuit
         self.build_reservoir()
@@ -265,26 +278,47 @@ class QuantumReservoir:
             if use_expectation:
                 # Measure expectation values of Pauli Z on each qubit
                 features = []
-                for qubit in range(self.n_qubits):
-                    # Add measurement
-                    measure_circuit = full_circuit.copy()
-                    measure_circuit.measure_all()
-                    
-                    # Run simulation
-                    job = self.simulator.run(measure_circuit, shots=self.shots)
-                    result = job.result()
-                    counts = result.get_counts(measure_circuit)
-                    
-                    # Calculate expectation value <Z>
-                    expectation = 0.0
-                    total_shots = sum(counts.values())
-                    for bitstring, count in counts.items():
-                        # Reverse bitstring (Qiskit uses little-endian)
-                        bit = int(bitstring[::-1][qubit])
-                        z_value = 1 if bit == 0 else -1
-                        expectation += z_value * (count / total_shots)
-                    
-                    features.append(expectation)
+                
+                if self.simulator is not None:
+                    # Use AerSimulator
+                    for qubit in range(self.n_qubits):
+                        measure_circuit = full_circuit.copy()
+                        measure_circuit.measure_all()
+                        
+                        job = self.simulator.run(measure_circuit, shots=self.shots)
+                        result = job.result()
+                        counts = result.get_counts(measure_circuit)
+                        
+                        # Calculate expectation value <Z>
+                        expectation = 0.0
+                        total_shots = sum(counts.values())
+                        for bitstring, count in counts.items():
+                            bit = int(bitstring[::-1][qubit])
+                            z_value = 1 if bit == 0 else -1
+                            expectation += z_value * (count / total_shots)
+                        
+                        features.append(expectation)
+                else:
+                    # Use Statevector for exact simulation
+                    state = Statevector(full_circuit)
+                    for qubit in range(self.n_qubits):
+                        # Calculate expectation value <Z> = <0|Z|0> - <1|Z|1>
+                        # Z|0> = |0>, Z|1> = -|1>
+                        prob_0 = np.abs(state.probabilities()[0]) if qubit == 0 else 0
+                        # For multi-qubit, need to trace out other qubits
+                        from qiskit.quantum_info import partial_trace
+                        from qiskit.quantum_info.operators import Operator
+                        from qiskit.quantum_info import SparsePauliOp
+                        
+                        # Simpler approach: use probabilities
+                        probs = state.probabilities_dict()
+                        expectation = 0.0
+                        for bitstring, prob in probs.items():
+                            bit = int(bitstring[::-1][qubit])
+                            z_value = 1 if bit == 0 else -1
+                            expectation += z_value * prob
+                        
+                        features.append(expectation)
                 
                 reservoir_states.append(features)
             
@@ -293,9 +327,18 @@ class QuantumReservoir:
                 measure_circuit = full_circuit.copy()
                 measure_circuit.measure_all()
                 
-                job = self.simulator.run(measure_circuit, shots=self.shots)
-                result = job.result()
-                counts = result.get_counts(measure_circuit)
+                if self.simulator is not None:
+                    job = self.simulator.run(measure_circuit, shots=self.shots)
+                    result = job.result()
+                    counts = result.get_counts(measure_circuit)
+                else:
+                    # Use Statevector
+                    state = Statevector(full_circuit)
+                    probs = state.probabilities_dict()
+                    # Sample according to probabilities
+                    counts = {}
+                    for bitstring, prob in probs.items():
+                        counts[bitstring] = int(prob * self.shots)
                 
                 # Convert counts to feature vector
                 n_bits = 2 ** self.n_qubits
@@ -304,7 +347,7 @@ class QuantumReservoir:
                 
                 for bitstring, count in counts.items():
                     idx = int(bitstring[::-1], 2)  # Reverse for little-endian
-                    feature_vector[idx] = count / total_shots
+                    feature_vector[idx] = count / total_shots if total_shots > 0 else 0
                 
                 reservoir_states.append(feature_vector)
         
