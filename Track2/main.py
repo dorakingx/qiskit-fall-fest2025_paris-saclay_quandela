@@ -1,0 +1,435 @@
+"""
+Main Script for Quantum Machine Learning Option Price Prediction
+
+This script implements a complete QML pipeline using Quantum Reservoir Computing
+to predict option prices from historical data.
+"""
+
+import argparse
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+from typing import Optional
+
+from src.data_loader import DataLoader
+from src.quantum_reservoir import QuantumReservoir
+from src.model import HybridQMLModel
+
+
+def parse_arguments():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Quantum Machine Learning for Option Price Prediction',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py --data_file Train_Dataset_Simulated_Price_swaption.xlsx
+  python main.py --data_file data.csv --n_qubits 6 --depth 4 --lookback 15
+  python main.py --data_file data.xlsx --regressor mlp --test_size 0.3
+        """
+    )
+    
+    # Data parameters
+    parser.add_argument(
+        '--data_file',
+        type=str,
+        default='Train_Dataset_Simulated_Price_swaption.xlsx',
+        help='Path to data file (Excel or CSV)'
+    )
+    
+    parser.add_argument(
+        '--price_column',
+        type=str,
+        default=None,
+        help='Name of the price column (auto-detected if not specified)'
+    )
+    
+    parser.add_argument(
+        '--lookback',
+        type=int,
+        default=10,
+        help='Lookback window size for time-series (default: 10)'
+    )
+    
+    parser.add_argument(
+        '--test_size',
+        type=float,
+        default=0.2,
+        help='Proportion of data for testing (default: 0.2)'
+    )
+    
+    # Quantum reservoir parameters
+    parser.add_argument(
+        '--n_qubits',
+        type=int,
+        default=4,
+        help='Number of qubits in reservoir (default: 4)'
+    )
+    
+    parser.add_argument(
+        '--depth',
+        type=int,
+        default=3,
+        help='Depth of reservoir circuit (default: 3)'
+    )
+    
+    parser.add_argument(
+        '--encoding',
+        type=str,
+        default='angle',
+        choices=['angle', 'amplitude'],
+        help='Encoding type: angle or amplitude (default: angle)'
+    )
+    
+    parser.add_argument(
+        '--entanglement',
+        type=str,
+        default='linear',
+        choices=['linear', 'circular'],
+        help='Entanglement pattern (default: linear)'
+    )
+    
+    parser.add_argument(
+        '--shots',
+        type=int,
+        default=1024,
+        help='Number of measurement shots (default: 1024)'
+    )
+    
+    # Classical regressor parameters
+    parser.add_argument(
+        '--regressor',
+        type=str,
+        default='linear',
+        choices=['linear', 'mlp'],
+        help='Type of classical regressor (default: linear)'
+    )
+    
+    # Normalization
+    parser.add_argument(
+        '--normalize_method',
+        type=str,
+        default='minmax',
+        choices=['minmax', 'zscore'],
+        help='Normalization method (default: minmax)'
+    )
+    
+    # Output parameters
+    parser.add_argument(
+        '--output_dir',
+        type=str,
+        default=None,
+        help='Output directory for results (default: current directory)'
+    )
+    
+    parser.add_argument(
+        '--save_model',
+        action='store_true',
+        help='Save the trained model'
+    )
+    
+    parser.add_argument(
+        '--visualize',
+        action='store_true',
+        default=True,
+        help='Generate visualization plots'
+    )
+    
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed for reproducibility (default: 42)'
+    )
+    
+    return parser.parse_args()
+
+
+def create_output_dir(output_dir: Optional[str]) -> Path:
+    """Create output directory if it doesn't exist."""
+    if output_dir is None:
+        script_dir = Path(__file__).parent
+        output_dir = script_dir / 'results'
+    else:
+        output_dir = Path(output_dir)
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def plot_predictions(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    title: str = "Predictions vs Actual",
+    save_path: Optional[Path] = None
+) -> None:
+    """Plot predictions against actual values."""
+    plt.figure(figsize=(12, 6))
+    
+    # Plot predictions and actual values
+    n_samples = len(y_true)
+    x = np.arange(n_samples)
+    
+    plt.plot(x, y_true, 'b-', label='Actual', alpha=0.7, linewidth=2)
+    plt.plot(x, y_pred, 'r--', label='Predicted', alpha=0.7, linewidth=2)
+    plt.xlabel('Sample Index', fontsize=12)
+    plt.ylabel('Price (Normalized)', fontsize=12)
+    plt.title(title, fontsize=14, fontweight='bold')
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {save_path}")
+    else:
+        plt.show()
+    
+    plt.close()
+
+
+def plot_residuals(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    save_path: Optional[Path] = None
+) -> None:
+    """Plot residual errors."""
+    residuals = y_true - y_pred
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # Residuals over time
+    axes[0].plot(residuals, 'o', alpha=0.6, markersize=4)
+    axes[0].axhline(y=0, color='r', linestyle='--', linewidth=2)
+    axes[0].set_xlabel('Sample Index', fontsize=11)
+    axes[0].set_ylabel('Residual Error', fontsize=11)
+    axes[0].set_title('Residuals Over Time', fontsize=12, fontweight='bold')
+    axes[0].grid(True, alpha=0.3)
+    
+    # Residual histogram
+    axes[1].hist(residuals, bins=30, edgecolor='black', alpha=0.7)
+    axes[1].axvline(x=0, color='r', linestyle='--', linewidth=2)
+    axes[1].set_xlabel('Residual Error', fontsize=11)
+    axes[1].set_ylabel('Frequency', fontsize=11)
+    axes[1].set_title('Residual Distribution', fontsize=12, fontweight='bold')
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Residual plot saved to {save_path}")
+    else:
+        plt.show()
+    
+    plt.close()
+
+
+def print_results_summary(
+    train_metrics: dict,
+    test_metrics: dict,
+    model_info: dict
+) -> None:
+    """Print a formatted summary of results."""
+    print("\n" + "="*80)
+    print("  RESULTS SUMMARY")
+    print("="*80)
+    
+    print("\nModel Configuration:")
+    for key, value in model_info.items():
+        print(f"  {key}: {value}")
+    
+    print("\nTraining Metrics:")
+    for metric, value in train_metrics.items():
+        print(f"  {metric.upper()}: {value:.6f}")
+    
+    print("\nTest Metrics:")
+    for metric, value in test_metrics.items():
+        print(f"  {metric.upper()}: {value:.6f}")
+    
+    print("\n" + "="*80 + "\n")
+
+
+def main():
+    """Main execution function."""
+    args = parse_arguments()
+    
+    # Set random seed
+    np.random.seed(args.seed)
+    
+    # Create output directory
+    output_dir = create_output_dir(args.output_dir)
+    
+    print("\n" + "="*80)
+    print("  QUANTUM MACHINE LEARNING FOR OPTION PRICE PREDICTION")
+    print("="*80)
+    print(f"\nConfiguration:")
+    print(f"  Data file: {args.data_file}")
+    print(f"  Qubits: {args.n_qubits}")
+    print(f"  Circuit depth: {args.depth}")
+    print(f"  Encoding: {args.encoding}")
+    print(f"  Lookback window: {args.lookback}")
+    print(f"  Regressor: {args.regressor}")
+    print(f"  Test size: {args.test_size}")
+    
+    # ========================================================================
+    # DATA LOADING AND PREPROCESSING
+    # ========================================================================
+    print("\n" + "-"*80)
+    print("  STEP 1: Loading and Preprocessing Data")
+    print("-"*80)
+    
+    data_loader = DataLoader(
+        normalize_method=args.normalize_method,
+        lookback_window=args.lookback,
+        test_size=args.test_size,
+        random_seed=args.seed
+    )
+    
+    # Get data file path
+    data_file = Path(args.data_file)
+    if not data_file.is_absolute():
+        data_file = Path(__file__).parent / data_file
+    
+    if not data_file.exists():
+        raise FileNotFoundError(f"Data file not found: {data_file}")
+    
+    print(f"Loading data from: {data_file}")
+    X_train, X_test, y_train, y_test = data_loader.prepare_data(
+        data_file,
+        price_column=args.price_column
+    )
+    
+    print(f"Training samples: {len(X_train)}")
+    print(f"Test samples: {len(X_test)}")
+    print(f"Input shape: {X_train.shape}")
+    
+    # ========================================================================
+    # QUANTUM RESERVOIR SETUP
+    # ========================================================================
+    print("\n" + "-"*80)
+    print("  STEP 2: Building Quantum Reservoir")
+    print("-"*80)
+    
+    quantum_reservoir = QuantumReservoir(
+        n_qubits=args.n_qubits,
+        depth=args.depth,
+        encoding_type=args.encoding,
+        entanglement_pattern=args.entanglement,
+        random_seed=args.seed,
+        shots=args.shots
+    )
+    
+    print(f"Reservoir circuit depth: {quantum_reservoir.get_circuit_depth()}")
+    
+    # Visualize circuit if requested
+    if args.visualize:
+        circuit_path = output_dir / 'quantum_reservoir_circuit.png'
+        try:
+            quantum_reservoir.visualize_circuit(str(circuit_path))
+        except Exception as e:
+            print(f"Warning: Could not visualize circuit: {e}")
+    
+    # ========================================================================
+    # MODEL TRAINING
+    # ========================================================================
+    print("\n" + "-"*80)
+    print("  STEP 3: Training Hybrid QML Model")
+    print("-"*80)
+    
+    model = HybridQMLModel(
+        quantum_reservoir=quantum_reservoir,
+        regressor_type=args.regressor
+    )
+    
+    model.fit(X_train, y_train, verbose=True)
+    
+    # ========================================================================
+    # EVALUATION
+    # ========================================================================
+    print("\n" + "-"*80)
+    print("  STEP 4: Evaluating Model")
+    print("-"*80)
+    
+    # Training metrics
+    train_metrics = model.evaluate(X_train, y_train)
+    print("\nTraining Metrics:")
+    for metric, value in train_metrics.items():
+        print(f"  {metric.upper()}: {value:.6f}")
+    
+    # Test metrics
+    test_metrics = model.evaluate(X_test, y_test)
+    print("\nTest Metrics:")
+    for metric, value in test_metrics.items():
+        print(f"  {metric.upper()}: {value:.6f}")
+    
+    # Generate predictions
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
+    
+    # ========================================================================
+    # VISUALIZATION
+    # ========================================================================
+    if args.visualize:
+        print("\n" + "-"*80)
+        print("  STEP 5: Generating Visualizations")
+        print("-"*80)
+        
+        # Training predictions
+        plot_predictions(
+            y_train, y_train_pred,
+            title="Training Set: Predictions vs Actual",
+            save_path=output_dir / 'train_predictions.png'
+        )
+        
+        # Test predictions
+        plot_predictions(
+            y_test, y_test_pred,
+            title="Test Set: Predictions vs Actual",
+            save_path=output_dir / 'test_predictions.png'
+        )
+        
+        # Residuals
+        plot_residuals(
+            y_test, y_test_pred,
+            save_path=output_dir / 'residuals.png'
+        )
+    
+    # ========================================================================
+    # RESULTS SUMMARY
+    # ========================================================================
+    model_info = {
+        'n_qubits': args.n_qubits,
+        'circuit_depth': args.depth,
+        'encoding': args.encoding,
+        'lookback_window': args.lookback,
+        'regressor': args.regressor,
+        'training_samples': len(X_train),
+        'test_samples': len(X_test)
+    }
+    
+    print_results_summary(train_metrics, test_metrics, model_info)
+    
+    # Save results to file
+    results_file = output_dir / 'results_summary.txt'
+    with open(results_file, 'w') as f:
+        f.write("QUANTUM MACHINE LEARNING RESULTS\n")
+        f.write("="*80 + "\n\n")
+        f.write("Model Configuration:\n")
+        for key, value in model_info.items():
+            f.write(f"  {key}: {value}\n")
+        f.write("\nTraining Metrics:\n")
+        for metric, value in train_metrics.items():
+            f.write(f"  {metric.upper()}: {value:.6f}\n")
+        f.write("\nTest Metrics:\n")
+        for metric, value in test_metrics.items():
+            f.write(f"  {metric.upper()}: {value:.6f}\n")
+    
+    print(f"Results saved to: {output_dir}")
+    print("="*80 + "\n")
+
+
+if __name__ == "__main__":
+    main()
+

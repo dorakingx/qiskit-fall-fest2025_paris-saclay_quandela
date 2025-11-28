@@ -178,7 +178,7 @@ This project was developed for the Qiskit Fall Fest 2025 competition.
 
 ## Authors
 
-Developed for Qiskit Fall Fest 2025 - Paris-Saclay Track 1
+Developed for Qiskit Fall Fest 2025 - Paris-Saclay, Quandera Track 1
 
 ## Acknowledgments
 
