@@ -323,62 +323,102 @@ def print_results_summary(
     print("\n" + "="*80 + "\n")
 
 
-def main():
-    """Main execution function."""
-    args = parse_arguments()
+def run_experiment(config: dict) -> dict:
+    """
+    Runs a single experiment with the given configuration.
     
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary containing all hyperparameters:
+        - data_file: str
+        - tenor: float or None
+        - maturity: float or None
+        - use_log_returns: bool
+        - n_qubits: int
+        - depth: int
+        - encoding: str
+        - entanglement: str
+        - lookback: int
+        - regressor: str
+        - normalize_method: str
+        - test_size: float
+        - data_scaling_factor: float
+        - shots: int
+        - seed: int
+        - output_dir: str or None
+        - visualize: bool
+        - price_column: str or None
+    
+    Returns
+    -------
+    dict
+        Dictionary containing test metrics:
+        - r2: float (R² score on test set)
+        - mse: float (MSE on test set)
+        - mae: float (MAE on test set)
+        - rmse: float (RMSE on test set)
+        - mape: float (MAPE on test set, if price reconstruction available)
+    """
     # Set random seed
-    np.random.seed(args.seed)
+    np.random.seed(config['seed'])
     
     # Create output directory
-    output_dir = create_output_dir(args.output_dir)
+    output_dir = create_output_dir(config.get('output_dir'))
     
-    print("\n" + "="*80)
-    print("  QUANTUM MACHINE LEARNING FOR OPTION PRICE PREDICTION")
-    print("="*80)
-    print(f"\nConfiguration:")
-    print(f"  Data file: {args.data_file}")
-    if args.tenor is not None:
-        print(f"  Tenor: {args.tenor}")
-    if args.maturity is not None:
-        print(f"  Maturity: {args.maturity}")
-    print(f"  Use log returns: {args.use_log_returns}")
-    print(f"  Qubits: {args.n_qubits}")
-    print(f"  Circuit depth: {args.depth}")
-    print(f"  Encoding: {args.encoding}")
-    print(f"  Entanglement: {args.entanglement}")
-    print(f"  Lookback window: {args.lookback}")
-    print(f"  Regressor: {args.regressor}")
-    print(f"  Test size: {args.test_size}")
+    # Suppress verbose output during tuning (unless visualize is True)
+    verbose = config.get('verbose', True)
+    
+    if verbose:
+        print("\n" + "="*80)
+        print("  QUANTUM MACHINE LEARNING FOR OPTION PRICE PREDICTION")
+        print("="*80)
+        print(f"\nConfiguration:")
+        print(f"  Data file: {config['data_file']}")
+        if config.get('tenor') is not None:
+            print(f"  Tenor: {config['tenor']}")
+        if config.get('maturity') is not None:
+            print(f"  Maturity: {config['maturity']}")
+        print(f"  Use log returns: {config['use_log_returns']}")
+        print(f"  Qubits: {config['n_qubits']}")
+        print(f"  Circuit depth: {config['depth']}")
+        print(f"  Encoding: {config['encoding']}")
+        print(f"  Entanglement: {config['entanglement']}")
+        print(f"  Lookback window: {config['lookback']}")
+        print(f"  Regressor: {config['regressor']}")
+        print(f"  Test size: {config['test_size']}")
+        print(f"  Data scaling factor: {config['data_scaling_factor']:.4f}")
     
     # ========================================================================
     # DATA LOADING AND PREPROCESSING
     # ========================================================================
-    print("\n" + "-"*80)
-    print("  STEP 1: Loading and Preprocessing Data")
-    print("-"*80)
+    if verbose:
+        print("\n" + "-"*80)
+        print("  STEP 1: Loading and Preprocessing Data")
+        print("-"*80)
     
     data_loader = DataLoader(
-        normalize_method=args.normalize_method,
-        lookback_window=args.lookback,
-        test_size=args.test_size,
-        random_seed=args.seed
+        normalize_method=config['normalize_method'],
+        lookback_window=config['lookback'],
+        test_size=config['test_size'],
+        random_seed=config['seed']
     )
     
     # Get data file path
-    data_file = Path(args.data_file)
+    data_file = Path(config['data_file'])
     if not data_file.is_absolute():
         data_file = Path(__file__).parent / data_file
     
     if not data_file.exists():
         raise FileNotFoundError(f"Data file not found: {data_file}")
     
-    print(f"Loading data from: {data_file}")
+    if verbose:
+        print(f"Loading data from: {data_file}")
     
     # Check for available Tenor/Maturity pairs (Swaption format)
     try:
         available_pairs = data_loader.get_available_pairs(data_file)
-        if len(available_pairs) > 0:
+        if len(available_pairs) > 0 and verbose:
             print(f"\nAvailable (Tenor, Maturity) pairs in dataset: {len(available_pairs)}")
             for i, (t, m) in enumerate(available_pairs[:10]):  # Show first 10
                 print(f"  {i+1}. Tenor={t}, Maturity={m}")
@@ -386,102 +426,112 @@ def main():
                 print(f"  ... and {len(available_pairs) - 10} more pairs")
             
             # Validate requested pair
-            if args.tenor is not None and args.maturity is not None:
+            if config.get('tenor') is not None and config.get('maturity') is not None:
                 matching_pair = None
                 for (t, m) in available_pairs:
-                    if (abs(t - args.tenor) < 1e-6 and abs(m - args.maturity) < 1e-6):
+                    if (abs(t - config['tenor']) < 1e-6 and abs(m - config['maturity']) < 1e-6):
                         matching_pair = (t, m)
                         break
                 
                 if matching_pair is None:
-                    print(f"\nWARNING: Requested pair (Tenor={args.tenor}, Maturity={args.maturity}) not found!")
+                    if verbose:
+                        print(f"\nWARNING: Requested pair (Tenor={config['tenor']}, Maturity={config['maturity']}) not found!")
+                        print("Available pairs:")
+                        for (t, m) in available_pairs:
+                            print(f"  - Tenor={t}, Maturity={m}")
+                    raise ValueError(
+                        f"Tenor={config['tenor']}, Maturity={config['maturity']} not found in dataset"
+                    )
+                elif verbose:
+                    print(f"\nUsing pair: Tenor={matching_pair[0]}, Maturity={matching_pair[1]}")
+            elif config.get('tenor') is not None or config.get('maturity') is not None:
+                if verbose:
+                    print("\nWARNING: Both --tenor and --maturity must be specified for Swaption data")
                     print("Available pairs:")
                     for (t, m) in available_pairs:
                         print(f"  - Tenor={t}, Maturity={m}")
-                    raise ValueError(
-                        f"Tenor={args.tenor}, Maturity={args.maturity} not found in dataset"
-                    )
-                else:
-                    print(f"\nUsing pair: Tenor={matching_pair[0]}, Maturity={matching_pair[1]}")
-            elif args.tenor is not None or args.maturity is not None:
-                print("\nWARNING: Both --tenor and --maturity must be specified for Swaption data")
-                print("Available pairs:")
-                for (t, m) in available_pairs:
-                    print(f"  - Tenor={t}, Maturity={m}")
     except Exception as e:
         # Not Swaption format or error parsing, continue with standard format
         if "Swaption" in str(e) or "parse" in str(e).lower():
-            warnings.warn(f"Could not parse Swaption format: {e}", UserWarning)
+            if verbose:
+                warnings.warn(f"Could not parse Swaption format: {e}", UserWarning)
         pass
     
-    if args.tenor is not None or args.maturity is not None:
-        print(f"Filtering for Tenor={args.tenor}, Maturity={args.maturity}")
-    if args.use_log_returns:
-        print("Using log returns instead of raw prices")
+    if verbose:
+        if config.get('tenor') is not None or config.get('maturity') is not None:
+            print(f"Filtering for Tenor={config.get('tenor')}, Maturity={config.get('maturity')}")
+        if config['use_log_returns']:
+            print("Using log returns instead of raw prices")
     
     result = data_loader.prepare_data(
         data_file,
-        price_column=args.price_column,
-        tenor=args.tenor,
-        maturity=args.maturity,
-        use_log_returns=args.use_log_returns
+        price_column=config.get('price_column'),
+        tenor=config.get('tenor'),
+        maturity=config.get('maturity'),
+        use_log_returns=config['use_log_returns']
     )
     X_train, X_test, y_train, y_test, test_initial_prices = result
     
-    print(f"Training samples: {len(X_train)}")
-    print(f"Test samples: {len(X_test)}")
-    print(f"Input shape: {X_train.shape}")
+    if verbose:
+        print(f"Training samples: {len(X_train)}")
+        print(f"Test samples: {len(X_test)}")
+        print(f"Input shape: {X_train.shape}")
     
     # ========================================================================
     # QUANTUM RESERVOIR SETUP
     # ========================================================================
-    print("\n" + "-"*80)
-    print("  STEP 2: Building Quantum Reservoir")
-    print("-"*80)
+    if verbose:
+        print("\n" + "-"*80)
+        print("  STEP 2: Building Quantum Reservoir")
+        print("-"*80)
     
     quantum_reservoir = QuantumReservoir(
-        n_qubits=args.n_qubits,
-        depth=args.depth,
-        encoding_type=args.encoding,
-        entanglement_pattern=args.entanglement,
-        random_seed=args.seed,
-        shots=args.shots,
-        data_scaling_factor=DATA_SCALING_FACTOR
+        n_qubits=config['n_qubits'],
+        depth=config['depth'],
+        encoding_type=config['encoding'],
+        entanglement_pattern=config['entanglement'],
+        random_seed=config['seed'],
+        shots=config['shots'],
+        data_scaling_factor=config['data_scaling_factor']
     )
     
-    print(f"Reservoir circuit depth: {quantum_reservoir.get_circuit_depth()}")
+    if verbose:
+        print(f"Reservoir circuit depth: {quantum_reservoir.get_circuit_depth()}")
     
     # Warn if lookback > n_qubits with angle encoding (older history will be truncated)
-    if args.encoding == 'angle' and args.lookback > args.n_qubits:
-        warnings.warn(
-            f"Lookback window ({args.lookback}) > number of qubits ({args.n_qubits}). "
-            f"With angle encoding, only the last {args.n_qubits} values will be used. "
-            f"Older history will be truncated. Consider setting lookback={args.n_qubits} "
-            f"for 1-to-1 mapping without information loss.",
-            UserWarning
-        )
+    if config['encoding'] == 'angle' and config['lookback'] > config['n_qubits']:
+        if verbose:
+            warnings.warn(
+                f"Lookback window ({config['lookback']}) > number of qubits ({config['n_qubits']}). "
+                f"With angle encoding, only the last {config['n_qubits']} values will be used. "
+                f"Older history will be truncated. Consider setting lookback={config['n_qubits']} "
+                f"for 1-to-1 mapping without information loss.",
+                UserWarning
+            )
     
     # Visualize circuit if requested
-    if args.visualize:
+    if config.get('visualize', False):
         circuit_path = output_dir / 'quantum_reservoir_circuit.png'
         try:
             quantum_reservoir.visualize_circuit(str(circuit_path))
         except Exception as e:
-            print(f"Warning: Could not visualize circuit: {e}")
+            if verbose:
+                print(f"Warning: Could not visualize circuit: {e}")
     
     # ========================================================================
     # MODEL TRAINING
     # ========================================================================
-    print("\n" + "-"*80)
-    print("  STEP 3: Training Hybrid QML Model")
-    print("-"*80)
+    if verbose:
+        print("\n" + "-"*80)
+        print("  STEP 3: Training Hybrid QML Model")
+        print("-"*80)
     
     model = HybridQMLModel(
         quantum_reservoir=quantum_reservoir,
-        regressor_type=args.regressor
+        regressor_type=config['regressor']
     )
     
-    model.fit(X_train, y_train, verbose=True)
+    model.fit(X_train, y_train, verbose=verbose)
     
     # ========================================================================
     # GENERATE PREDICTIONS
@@ -498,10 +548,11 @@ def main():
     y_test_pred_prices = None
     y_test_actual_prices = None
     
-    if args.use_log_returns and test_initial_prices is not None:
-        print("\n" + "-"*80)
-        print("  STEP 4.5: Reconstructing Prices from Log Returns")
-        print("-"*80)
+    if config['use_log_returns'] and test_initial_prices is not None:
+        if verbose:
+            print("\n" + "-"*80)
+            print("  STEP 4.5: Reconstructing Prices from Log Returns")
+            print("-"*80)
         
         # Denormalize log returns
         y_test_pred_denorm = data_loader.denormalize(y_test_pred)
@@ -525,20 +576,18 @@ def main():
                 y_test_pred_prices[i] = y_test_pred_prices[i-1] * np.exp(y_test_pred_denorm[i])
                 y_test_actual_prices[i] = y_test_actual_prices[i-1] * np.exp(y_test_denorm[i])
         
-        # For training set, we need to reconstruct from the beginning
-        # We'll use a similar approach but need the initial price for training set
-        # For now, we'll skip training price reconstruction or use a placeholder
-        # (Training metrics on log-returns are still meaningful)
-        print(f"Reconstructed {len(y_test_pred_prices)} test prices")
-        print(f"  First predicted price: {y_test_pred_prices[0]:.4f}")
-        print(f"  First actual price: {y_test_actual_prices[0]:.4f}")
+        if verbose:
+            print(f"Reconstructed {len(y_test_pred_prices)} test prices")
+            print(f"  First predicted price: {y_test_pred_prices[0]:.4f}")
+            print(f"  First actual price: {y_test_actual_prices[0]:.4f}")
     
     # ========================================================================
     # EVALUATION
     # ========================================================================
-    print("\n" + "-"*80)
-    print("  STEP 4: Evaluating Model")
-    print("-"*80)
+    if verbose:
+        print("\n" + "-"*80)
+        print("  STEP 4: Evaluating Model")
+        print("-"*80)
     
     # Training metrics (on log-returns)
     train_metrics = model.evaluate(X_train, y_train, metrics=['mse', 'mae', 'r2', 'rmse'])
@@ -547,7 +596,7 @@ def main():
     test_metrics = model.evaluate(X_test, y_test, metrics=['mse', 'mae', 'r2', 'rmse'])
     
     # Calculate MAPE and MSE on reconstructed prices if available
-    if args.use_log_returns and y_test_pred_prices is not None and y_test_actual_prices is not None:
+    if config['use_log_returns'] and y_test_pred_prices is not None and y_test_actual_prices is not None:
         # Calculate MAPE on reconstructed prices (meaningful metric)
         test_mape_prices = calculate_mape(y_test_actual_prices, y_test_pred_prices)
         test_metrics['mape'] = test_mape_prices
@@ -561,44 +610,47 @@ def main():
         test_metrics['mse_log_returns'] = test_metrics['mse']
         test_metrics['r2_log_returns'] = test_metrics['r2']
         
-        print("\nTest Metrics (on Reconstructed Prices):")
-        print(f"  MSE: {test_mse_prices:.6f}")
-        print(f"  RMSE: {np.sqrt(test_mse_prices):.6f}")
-        print(f"  MAPE: {test_mape_prices:.4f}%")
-        print("\nTest Metrics (on Log Returns - for reference):")
-        print(f"  MSE: {test_metrics['mse']:.6f}")
-        print(f"  R²: {test_metrics['r2']:.6f}")
+        if verbose:
+            print("\nTest Metrics (on Reconstructed Prices):")
+            print(f"  MSE: {test_mse_prices:.6f}")
+            print(f"  RMSE: {np.sqrt(test_mse_prices):.6f}")
+            print(f"  MAPE: {test_mape_prices:.4f}%")
+            print("\nTest Metrics (on Log Returns - for reference):")
+            print(f"  MSE: {test_metrics['mse']:.6f}")
+            print(f"  R²: {test_metrics['r2']:.6f}")
     else:
         # Fallback: calculate MAPE on log-returns (less meaningful but better than nothing)
-        train_mape = calculate_mape(y_train, model.predict(X_train))
+        train_mape = calculate_mape(y_train, y_train_pred)
         train_metrics['mape'] = train_mape
-        test_mape = calculate_mape(y_test, model.predict(X_test))
+        test_mape = calculate_mape(y_test, y_test_pred)
         test_metrics['mape'] = test_mape
         
-        print("\nTraining Metrics (on Log Returns):")
-        for metric, value in train_metrics.items():
-            if metric == 'mape':
-                print(f"  {metric.upper()}: {value:.4f}%")
-            else:
-                print(f"  {metric.upper()}: {value:.6f}")
-        
-        print("\nTest Metrics (on Log Returns):")
-        for metric, value in test_metrics.items():
-            if metric == 'mape':
-                print(f"  {metric.upper()}: {value:.4f}%")
-            else:
-                print(f"  {metric.upper()}: {value:.6f}")
+        if verbose:
+            print("\nTraining Metrics (on Log Returns):")
+            for metric, value in train_metrics.items():
+                if metric == 'mape':
+                    print(f"  {metric.upper()}: {value:.4f}%")
+                else:
+                    print(f"  {metric.upper()}: {value:.6f}")
+            
+            print("\nTest Metrics (on Log Returns):")
+            for metric, value in test_metrics.items():
+                if metric == 'mape':
+                    print(f"  {metric.upper()}: {value:.4f}%")
+                else:
+                    print(f"  {metric.upper()}: {value:.6f}")
     
     # ========================================================================
     # VISUALIZATION
     # ========================================================================
-    if args.visualize:
-        print("\n" + "-"*80)
-        print("  STEP 5: Generating Visualizations")
-        print("-"*80)
+    if config.get('visualize', False):
+        if verbose:
+            print("\n" + "-"*80)
+            print("  STEP 5: Generating Visualizations")
+            print("-"*80)
         
         # Plot reconstructed prices if available, otherwise plot log-returns
-        if args.use_log_returns and y_test_pred_prices is not None and y_test_actual_prices is not None:
+        if config['use_log_returns'] and y_test_pred_prices is not None and y_test_actual_prices is not None:
             # Plot reconstructed prices (real currency values)
             plot_predictions(
                 y_test_actual_prices, y_test_pred_prices,
@@ -653,45 +705,95 @@ def main():
     # ========================================================================
     # RESULTS SUMMARY
     # ========================================================================
-    model_info = {
-        'n_qubits': args.n_qubits,
-        'circuit_depth': args.depth,
-        'encoding': args.encoding,
-        'entanglement': args.entanglement,
-        'lookback_window': args.lookback,
-        'regressor': args.regressor,
-        'use_log_returns': args.use_log_returns,
+    if verbose:
+        model_info = {
+            'n_qubits': config['n_qubits'],
+            'circuit_depth': config['depth'],
+            'encoding': config['encoding'],
+            'entanglement': config['entanglement'],
+            'lookback_window': config['lookback'],
+            'regressor': config['regressor'],
+            'use_log_returns': config['use_log_returns'],
+            'tenor': config.get('tenor'),
+            'maturity': config.get('maturity'),
+            'training_samples': len(X_train),
+            'test_samples': len(X_test)
+        }
+        
+        print_results_summary(train_metrics, test_metrics, model_info)
+        
+        # Save results to file
+        results_file = output_dir / 'results_summary.txt'
+        with open(results_file, 'w') as f:
+            f.write("QUANTUM MACHINE LEARNING RESULTS\n")
+            f.write("="*80 + "\n\n")
+            f.write("Model Configuration:\n")
+            for key, value in model_info.items():
+                f.write(f"  {key}: {value}\n")
+            f.write("\nTraining Metrics:\n")
+            for metric, value in train_metrics.items():
+                if metric == 'mape':
+                    f.write(f"  {metric.upper()}: {value:.4f}%\n")
+                else:
+                    f.write(f"  {metric.upper()}: {value:.6f}\n")
+            f.write("\nTest Metrics:\n")
+            for metric, value in test_metrics.items():
+                if metric == 'mape':
+                    f.write(f"  {metric.upper()}: {value:.4f}%\n")
+                else:
+                    f.write(f"  {metric.upper()}: {value:.6f}\n")
+        
+        print(f"Results saved to: {output_dir}")
+        print("="*80 + "\n")
+    
+    # Return test metrics for tuning
+    return {
+        'r2': test_metrics['r2'],
+        'mse': test_metrics['mse'],
+        'mae': test_metrics['mae'],
+        'rmse': test_metrics['rmse'],
+        'mape': test_metrics.get('mape', None)
+    }
+
+
+def main():
+    """Main execution function."""
+    args = parse_arguments()
+    
+    # Convert args to config dictionary
+    config = {
+        'data_file': args.data_file,
         'tenor': args.tenor,
         'maturity': args.maturity,
-        'training_samples': len(X_train),
-        'test_samples': len(X_test)
+        'use_log_returns': args.use_log_returns,
+        'n_qubits': args.n_qubits,
+        'depth': args.depth,
+        'encoding': args.encoding,
+        'entanglement': args.entanglement,
+        'lookback': args.lookback,
+        'regressor': args.regressor,
+        'normalize_method': args.normalize_method,
+        'test_size': args.test_size,
+        'data_scaling_factor': DATA_SCALING_FACTOR,
+        'shots': args.shots,
+        'seed': args.seed,
+        'output_dir': args.output_dir,
+        'visualize': args.visualize,
+        'price_column': args.price_column,
+        'verbose': True
     }
     
-    print_results_summary(train_metrics, test_metrics, model_info)
+    # Run experiment
+    metrics = run_experiment(config)
     
-    # Save results to file
-    results_file = output_dir / 'results_summary.txt'
-    with open(results_file, 'w') as f:
-        f.write("QUANTUM MACHINE LEARNING RESULTS\n")
-        f.write("="*80 + "\n\n")
-        f.write("Model Configuration:\n")
-        for key, value in model_info.items():
-            f.write(f"  {key}: {value}\n")
-        f.write("\nTraining Metrics:\n")
-        for metric, value in train_metrics.items():
-            if metric == 'mape':
-                f.write(f"  {metric.upper()}: {value:.4f}%\n")
-            else:
-                f.write(f"  {metric.upper()}: {value:.6f}\n")
-        f.write("\nTest Metrics:\n")
-        for metric, value in test_metrics.items():
-            if metric == 'mape':
-                f.write(f"  {metric.upper()}: {value:.4f}%\n")
-            else:
-                f.write(f"  {metric.upper()}: {value:.6f}\n")
-    
-    print(f"Results saved to: {output_dir}")
-    print("="*80 + "\n")
+    # Print final results
+    print("\nFinal Results:")
+    print(f"  Test R²: {metrics['r2']:.6f}")
+    print(f"  Test MSE: {metrics['mse']:.6f}")
+    print(f"  Test MAE: {metrics['mae']:.6f}")
+    print(f"  Test RMSE: {metrics['rmse']:.6f}")
+    if metrics['mape'] is not None:
+        print(f"  Test MAPE: {metrics['mape']:.4f}%")
 
 
 if __name__ == "__main__":
