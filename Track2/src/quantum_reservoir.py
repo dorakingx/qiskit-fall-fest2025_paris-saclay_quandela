@@ -174,6 +174,8 @@ class QuantumReservoir:
         if self.encoding_type == "angle":
             # Angle encoding: map sequence of data points 1-to-1 to rotation angles
             # This preserves temporal information by encoding the full sequence
+            # IMPORTANT: Data is assumed to be globally normalized (Z-score) from DataLoader
+            # We preserve magnitude information by NOT normalizing per-window
             if len(data) != self.n_qubits:
                 # Handle length mismatches
                 if len(data) < self.n_qubits:
@@ -184,18 +186,18 @@ class QuantumReservoir:
                     # This ensures we capture the most recent temporal patterns
                     data = data[-self.n_qubits:]
             
-            # Normalize data to [0, 2π] range for rotation angles
-            if np.max(np.abs(data)) > 0:
-                data_normalized = (data - np.min(data)) / (
-                    np.max(data) - np.min(data) + 1e-8
-                ) * 2 * np.pi
-            else:
-                data_normalized = data
+            # Map Z-score normalized data directly to rotation angles
+            # This preserves magnitude information (small vs large returns are distinguishable)
+            # Option 1: Linear mapping - maps Z-score of ±3 to ±π
+            # Option 2: Bounded mapping using arctan (commented out)
+            # Using linear mapping to preserve magnitude relationships
+            angles = data * (np.pi / 3.0)
+            # Alternative bounded mapping: angles = np.arctan(data) * 2
             
             # Apply rotation gates: map each sequence element to a qubit
-            # This creates a 1-to-1 mapping preserving temporal order
+            # This creates a 1-to-1 mapping preserving temporal order AND magnitude
             for qubit in range(self.n_qubits):
-                circuit.ry(data_normalized[qubit], qubit)
+                circuit.ry(angles[qubit], qubit)
         
         elif self.encoding_type == "amplitude":
             # Amplitude encoding: map data to quantum state amplitudes

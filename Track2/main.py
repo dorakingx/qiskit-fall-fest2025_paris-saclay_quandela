@@ -414,13 +414,14 @@ def main():
     if args.use_log_returns:
         print("Using log returns instead of raw prices")
     
-    X_train, X_test, y_train, y_test = data_loader.prepare_data(
+    result = data_loader.prepare_data(
         data_file,
         price_column=args.price_column,
         tenor=args.tenor,
         maturity=args.maturity,
         use_log_returns=args.use_log_returns
     )
+    X_train, X_test, y_train, y_test, test_initial_prices = result
     
     print(f"Training samples: {len(X_train)}")
     print(f"Test samples: {len(X_test)}")
@@ -477,41 +478,110 @@ def main():
     model.fit(X_train, y_train, verbose=True)
     
     # ========================================================================
+    # GENERATE PREDICTIONS
+    # ========================================================================
+    # Generate predictions first (needed for price reconstruction)
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
+    
+    # ========================================================================
+    # PRICE RECONSTRUCTION (if using log returns)
+    # ========================================================================
+    y_train_pred_prices = None
+    y_train_actual_prices = None
+    y_test_pred_prices = None
+    y_test_actual_prices = None
+    
+    if args.use_log_returns and test_initial_prices is not None:
+        print("\n" + "-"*80)
+        print("  STEP 4.5: Reconstructing Prices from Log Returns")
+        print("-"*80)
+        
+        # Denormalize log returns
+        y_test_pred_denorm = data_loader.denormalize(y_test_pred)
+        y_test_denorm = data_loader.denormalize(y_test)
+        y_train_pred_denorm = data_loader.denormalize(y_train_pred)
+        y_train_denorm = data_loader.denormalize(y_train)
+        
+        # Reconstruct prices for test set
+        # Formula: Price_t = Price_{t-1} * exp(log_return_t)
+        y_test_pred_prices = np.zeros(len(y_test_pred))
+        y_test_actual_prices = np.zeros(len(y_test))
+        
+        # First prediction uses test_initial_prices[0] (price before first test prediction)
+        if test_initial_prices is not None and len(test_initial_prices) > 0:
+            initial_price = float(test_initial_prices[0])
+            y_test_pred_prices[0] = initial_price * np.exp(y_test_pred_denorm[0])
+            y_test_actual_prices[0] = initial_price * np.exp(y_test_denorm[0])
+            
+            # Subsequent predictions use previous reconstructed price
+            for i in range(1, len(y_test_pred)):
+                y_test_pred_prices[i] = y_test_pred_prices[i-1] * np.exp(y_test_pred_denorm[i])
+                y_test_actual_prices[i] = y_test_actual_prices[i-1] * np.exp(y_test_denorm[i])
+        
+        # For training set, we need to reconstruct from the beginning
+        # We'll use a similar approach but need the initial price for training set
+        # For now, we'll skip training price reconstruction or use a placeholder
+        # (Training metrics on log-returns are still meaningful)
+        print(f"Reconstructed {len(y_test_pred_prices)} test prices")
+        print(f"  First predicted price: {y_test_pred_prices[0]:.4f}")
+        print(f"  First actual price: {y_test_actual_prices[0]:.4f}")
+    
+    # ========================================================================
     # EVALUATION
     # ========================================================================
     print("\n" + "-"*80)
     print("  STEP 4: Evaluating Model")
     print("-"*80)
     
-    # Training metrics
+    # Training metrics (on log-returns)
     train_metrics = model.evaluate(X_train, y_train, metrics=['mse', 'mae', 'r2', 'rmse'])
-    # Add MAPE
-    train_mape = calculate_mape(y_train, model.predict(X_train))
-    train_metrics['mape'] = train_mape
     
-    print("\nTraining Metrics:")
-    for metric, value in train_metrics.items():
-        if metric == 'mape':
-            print(f"  {metric.upper()}: {value:.4f}%")
-        else:
-            print(f"  {metric.upper()}: {value:.6f}")
-    
-    # Test metrics
+    # Test metrics (on log-returns)
     test_metrics = model.evaluate(X_test, y_test, metrics=['mse', 'mae', 'r2', 'rmse'])
-    # Add MAPE
-    test_mape = calculate_mape(y_test, model.predict(X_test))
-    test_metrics['mape'] = test_mape
     
-    print("\nTest Metrics:")
-    for metric, value in test_metrics.items():
-        if metric == 'mape':
-            print(f"  {metric.upper()}: {value:.4f}%")
-        else:
-            print(f"  {metric.upper()}: {value:.6f}")
-    
-    # Generate predictions
-    y_train_pred = model.predict(X_train)
-    y_test_pred = model.predict(X_test)
+    # Calculate MAPE and MSE on reconstructed prices if available
+    if args.use_log_returns and y_test_pred_prices is not None and y_test_actual_prices is not None:
+        # Calculate MAPE on reconstructed prices (meaningful metric)
+        test_mape_prices = calculate_mape(y_test_actual_prices, y_test_pred_prices)
+        test_metrics['mape'] = test_mape_prices
+        
+        # Calculate MSE on reconstructed prices
+        test_mse_prices = np.mean((y_test_actual_prices - y_test_pred_prices) ** 2)
+        test_metrics['mse_prices'] = test_mse_prices
+        test_metrics['rmse_prices'] = np.sqrt(test_mse_prices)
+        
+        # Keep log-return metrics for reference
+        test_metrics['mse_log_returns'] = test_metrics['mse']
+        test_metrics['r2_log_returns'] = test_metrics['r2']
+        
+        print("\nTest Metrics (on Reconstructed Prices):")
+        print(f"  MSE: {test_mse_prices:.6f}")
+        print(f"  RMSE: {np.sqrt(test_mse_prices):.6f}")
+        print(f"  MAPE: {test_mape_prices:.4f}%")
+        print("\nTest Metrics (on Log Returns - for reference):")
+        print(f"  MSE: {test_metrics['mse']:.6f}")
+        print(f"  R²: {test_metrics['r2']:.6f}")
+    else:
+        # Fallback: calculate MAPE on log-returns (less meaningful but better than nothing)
+        train_mape = calculate_mape(y_train, model.predict(X_train))
+        train_metrics['mape'] = train_mape
+        test_mape = calculate_mape(y_test, model.predict(X_test))
+        test_metrics['mape'] = test_mape
+        
+        print("\nTraining Metrics (on Log Returns):")
+        for metric, value in train_metrics.items():
+            if metric == 'mape':
+                print(f"  {metric.upper()}: {value:.4f}%")
+            else:
+                print(f"  {metric.upper()}: {value:.6f}")
+        
+        print("\nTest Metrics (on Log Returns):")
+        for metric, value in test_metrics.items():
+            if metric == 'mape':
+                print(f"  {metric.upper()}: {value:.4f}%")
+            else:
+                print(f"  {metric.upper()}: {value:.6f}")
     
     # ========================================================================
     # VISUALIZATION
@@ -521,32 +591,58 @@ def main():
         print("  STEP 5: Generating Visualizations")
         print("-"*80)
         
-        # Training predictions
-        plot_predictions(
-            y_train, y_train_pred,
-            title="Training Set: Predictions vs Actual",
-            save_path=output_dir / 'train_predictions.png'
-        )
-        
-        # Test predictions
-        plot_predictions(
-            y_test, y_test_pred,
-            title="Test Set: Predictions vs Actual",
-            save_path=output_dir / 'test_predictions.png'
-        )
-        
-        # Main prediction plot (test set) - saved as prediction_plot.png
-        plot_predictions(
-            y_test, y_test_pred,
-            title="Predicted vs Actual Prices",
-            save_path=output_dir / 'prediction_plot.png'
-        )
-        
-        # Residuals
-        plot_residuals(
-            y_test, y_test_pred,
-            save_path=output_dir / 'residuals.png'
-        )
+        # Plot reconstructed prices if available, otherwise plot log-returns
+        if args.use_log_returns and y_test_pred_prices is not None and y_test_actual_prices is not None:
+            # Plot reconstructed prices (real currency values)
+            plot_predictions(
+                y_test_actual_prices, y_test_pred_prices,
+                title="Test Set: Predicted vs Actual Prices (Reconstructed)",
+                save_path=output_dir / 'test_predictions.png'
+            )
+            
+            # Main prediction plot (test set) - saved as prediction_plot.png
+            plot_predictions(
+                y_test_actual_prices, y_test_pred_prices,
+                title="Predicted vs Actual Prices",
+                save_path=output_dir / 'prediction_plot.png'
+            )
+            
+            # Residuals on reconstructed prices
+            plot_residuals(
+                y_test_actual_prices, y_test_pred_prices,
+                save_path=output_dir / 'residuals.png'
+            )
+            
+            # Also plot log-returns for reference
+            plot_predictions(
+                y_test, y_test_pred,
+                title="Training Set: Predictions vs Actual (Log Returns)",
+                save_path=output_dir / 'train_predictions.png'
+            )
+        else:
+            # Fallback: plot log-returns
+            plot_predictions(
+                y_train, y_train_pred,
+                title="Training Set: Predictions vs Actual",
+                save_path=output_dir / 'train_predictions.png'
+            )
+            
+            plot_predictions(
+                y_test, y_test_pred,
+                title="Test Set: Predictions vs Actual",
+                save_path=output_dir / 'test_predictions.png'
+            )
+            
+            plot_predictions(
+                y_test, y_test_pred,
+                title="Predicted vs Actual Prices",
+                save_path=output_dir / 'prediction_plot.png'
+            )
+            
+            plot_residuals(
+                y_test, y_test_pred,
+                save_path=output_dir / 'residuals.png'
+            )
     
     # ========================================================================
     # RESULTS SUMMARY

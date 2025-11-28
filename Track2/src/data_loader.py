@@ -683,7 +683,7 @@ class DataLoader:
         tenor: Optional[float] = None,
         maturity: Optional[float] = None,
         use_log_returns: bool = False
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """
         Complete data preparation pipeline: load, filter, normalize, window, split.
         
@@ -704,8 +704,9 @@ class DataLoader:
         
         Returns
         -------
-        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-            X_train, X_test, y_train, y_test
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]
+            X_train, X_test, y_train, y_test, test_initial_prices
+            test_initial_prices: Raw prices needed for reconstruction (None if not using log returns)
         """
         # Load data (with Tenor/Maturity filtering if specified)
         df = self.load_data(
@@ -733,7 +734,11 @@ class DataLoader:
             else:
                 raise ValueError("No numeric column found for prices")
         
-        prices = df[price_column].values.astype(float)
+        raw_prices = df[price_column].values.astype(float)
+        prices = raw_prices.copy()
+        
+        # Store original prices for price reconstruction if using log returns
+        test_initial_prices = None
         
         # Compute log returns if requested
         if use_log_returns:
@@ -742,6 +747,13 @@ class DataLoader:
                 # Note: log returns has length len(original_prices) - 1
                 # create_windows() handles this correctly by starting from lookback_window index
                 # This means we'll have one fewer window, which is expected and correct
+                
+                # Store raw prices for reconstruction
+                # We need prices at indices corresponding to test set predictions
+                # After windowing, test set starts at train_size index in the windowed data
+                # The corresponding raw price index is: lookback_window + train_size
+                # But we need the price BEFORE each prediction, so we store prices at the right indices
+                test_initial_prices = raw_prices.copy()
             except ValueError as e:
                 warnings.warn(
                     f"Could not compute log returns: {e}. Using raw prices instead.",
@@ -761,5 +773,39 @@ class DataLoader:
         # Split train/test
         X_train, X_test, y_train, y_test = self.split_train_test(X, y)
         
-        return X_train, X_test, y_train, y_test
+        # Extract test_initial_prices for price reconstruction
+        if use_log_returns and test_initial_prices is not None:
+            # Calculate the starting index in the original price series for test set
+            # 
+            # Indexing explanation:
+            # - Original prices: [P0, P1, P2, ..., Pn] (length n+1)
+            # - Log returns: [LR1, LR2, ..., LRn] where LRi = ln(Pi/Pi-1) (length n)
+            # - Windows: Window at index i uses [i-lookback, ..., i-1] to predict value at index i
+            # - So window at index i predicts log return LRi = ln(Pi/Pi-1)
+            # - To reconstruct Pi, we need: Pi = Pi-1 * exp(LRi)
+            # - We need Pi-1 as the initial price
+            #
+            # - First window starts at index 'lookback_window' in log returns array
+            # - Test set starts at train_size in the windowed data
+            # - So first test window is at log return index: lookback_window + train_size
+            # - This window predicts log return at index (lookback_window + train_size)
+            # - This log return is: LR_{lookback_window + train_size} = ln(P_{lookback_window + train_size + 1} / P_{lookback_window + train_size})
+            # - We need P_{lookback_window + train_size} as the initial price
+            
+            n_train = len(X_train)
+            # Index in log returns array where test set starts
+            test_start_log_return_idx = self.lookback_window + n_train
+            # Corresponding index in original prices (price before first test prediction)
+            test_start_price_idx = test_start_log_return_idx
+            
+            # Return just the first price (subsequent prices reconstructed recursively)
+            if test_start_price_idx < len(test_initial_prices):
+                test_initial_prices = np.array([test_initial_prices[test_start_price_idx]])
+            else:
+                # Edge case: not enough prices
+                test_initial_prices = None
+        else:
+            test_initial_prices = None
+        
+        return X_train, X_test, y_train, y_test, test_initial_prices
 
