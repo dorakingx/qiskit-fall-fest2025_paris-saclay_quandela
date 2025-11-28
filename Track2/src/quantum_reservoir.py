@@ -39,7 +39,8 @@ class QuantumReservoir:
         entanglement_pattern: str = "linear",
         random_seed: Optional[int] = None,
         shots: int = 1024,
-        noise_model: Optional[object] = None
+        noise_model: Optional[object] = None,
+        data_scaling_factor: float = np.pi / 3.0
     ):
         """
         Initialize the Quantum Reservoir.
@@ -60,6 +61,9 @@ class QuantumReservoir:
             Number of measurement shots for expectation value estimation
         noise_model : object, optional
             Qiskit noise model for simulation. If None, uses clean simulation.
+        data_scaling_factor : float, default=np.pi/3.0
+            Scaling factor for mapping normalized data to rotation angles.
+            Maps Z-score of ±3 to ±π by default. Can be tuned as a hyperparameter.
         """
         self.n_qubits = n_qubits
         self.depth = depth
@@ -67,6 +71,7 @@ class QuantumReservoir:
         self.entanglement_pattern = entanglement_pattern
         self.shots = shots
         self.noise_model = noise_model
+        self.data_scaling_factor = data_scaling_factor
         
         if random_seed is not None:
             np.random.seed(random_seed)
@@ -188,11 +193,9 @@ class QuantumReservoir:
             
             # Map Z-score normalized data directly to rotation angles
             # This preserves magnitude information (small vs large returns are distinguishable)
-            # Option 1: Linear mapping - maps Z-score of ±3 to ±π
-            # Option 2: Bounded mapping using arctan (commented out)
-            # Using linear mapping to preserve magnitude relationships
-            angles = data * (np.pi / 3.0)
+            # Uses configurable scaling factor (default: np.pi/3.0 maps Z-score of ±3 to ±π)
             # Alternative bounded mapping: angles = np.arctan(data) * 2
+            angles = data * self.data_scaling_factor
             
             # Apply rotation gates: map each sequence element to a qubit
             # This creates a 1-to-1 mapping preserving temporal order AND magnitude

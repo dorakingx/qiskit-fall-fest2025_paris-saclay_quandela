@@ -17,6 +17,11 @@ from src.data_loader import DataLoader
 from src.quantum_reservoir import QuantumReservoir
 from src.model import HybridQMLModel
 
+# Hyperparameter: Data scaling factor for angle encoding
+# Maps normalized data (Z-scores) to rotation angles
+# Default: np.pi/3.0 maps Z-score of ±3 to ±π
+DATA_SCALING_FACTOR = np.pi / 3.0
+
 
 def parse_arguments():
     """Parse command-line arguments."""
@@ -440,7 +445,8 @@ def main():
         encoding_type=args.encoding,
         entanglement_pattern=args.entanglement,
         random_seed=args.seed,
-        shots=args.shots
+        shots=args.shots,
+        data_scaling_factor=DATA_SCALING_FACTOR
     )
     
     print(f"Reservoir circuit depth: {quantum_reservoir.get_circuit_depth()}")
