@@ -179,6 +179,13 @@ Examples:
         help='Random seed for reproducibility (default: 42)'
     )
     
+    parser.add_argument(
+        '--max_samples',
+        type=int,
+        default=None,
+        help='Limit number of samples for quick debugging/tuning (default: None, use full dataset)'
+    )
+    
     return parser.parse_args()
 
 
@@ -468,7 +475,8 @@ def run_experiment(config: dict) -> dict:
         price_column=config.get('price_column'),
         tenor=config.get('tenor'),
         maturity=config.get('maturity'),
-        use_log_returns=config['use_log_returns']
+        use_log_returns=config['use_log_returns'],
+        max_samples=config.get('max_samples')
     )
     X_train, X_test, y_train, y_test, test_initial_prices = result
     
@@ -780,6 +788,7 @@ def main():
         'output_dir': args.output_dir,
         'visualize': args.visualize,
         'price_column': args.price_column,
+        'max_samples': args.max_samples,
         'verbose': True
     }
     

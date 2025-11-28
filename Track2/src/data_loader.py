@@ -682,7 +682,8 @@ class DataLoader:
         date_column: Optional[str] = None,
         tenor: Optional[float] = None,
         maturity: Optional[float] = None,
-        use_log_returns: bool = False
+        use_log_returns: bool = False,
+        max_samples: Optional[int] = None
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """
         Complete data preparation pipeline: load, filter, normalize, window, split.
@@ -701,6 +702,9 @@ class DataLoader:
             Maturity value to filter by (for Swaption data)
         use_log_returns : bool, default=False
             If True, use log returns instead of raw prices
+        max_samples : int, optional
+            Maximum number of samples to use. If provided and less than dataframe length,
+            truncates the dataframe to first max_samples rows for faster processing.
         
         Returns
         -------
@@ -724,6 +728,11 @@ class DataLoader:
                 raise ValueError(
                     f"No data found for Tenor={tenor}, Maturity={maturity}"
                 )
+        
+        # Truncate dataset if max_samples is specified (for quick tuning)
+        if max_samples is not None and len(df) > max_samples:
+            df = df.iloc[:max_samples]
+            print(f"Truncating dataset to first {max_samples} samples for speed.")
         
         # Extract price column
         if price_column is None:
