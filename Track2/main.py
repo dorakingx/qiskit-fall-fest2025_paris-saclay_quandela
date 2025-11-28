@@ -46,6 +46,26 @@ Examples:
     )
     
     parser.add_argument(
+        '--tenor',
+        type=float,
+        default=None,
+        help='Tenor value to filter by (for Swaption data)'
+    )
+    
+    parser.add_argument(
+        '--maturity',
+        type=float,
+        default=None,
+        help='Maturity value to filter by (for Swaption data)'
+    )
+    
+    parser.add_argument(
+        '--use_log_returns',
+        action='store_true',
+        help='Use log returns instead of raw prices'
+    )
+    
+    parser.add_argument(
         '--lookback',
         type=int,
         default=10,
@@ -86,8 +106,8 @@ Examples:
         '--entanglement',
         type=str,
         default='linear',
-        choices=['linear', 'circular'],
-        help='Entanglement pattern (default: linear)'
+        choices=['linear', 'circular', 'full'],
+        help='Entanglement pattern: linear, circular, or full (default: linear)'
     )
     
     parser.add_argument(
@@ -102,8 +122,8 @@ Examples:
         '--regressor',
         type=str,
         default='linear',
-        choices=['linear', 'mlp'],
-        help='Type of classical regressor (default: linear)'
+        choices=['linear', 'ridge', 'mlp'],
+        help='Type of classical regressor: linear, ridge, or mlp (default: linear)'
     )
     
     # Normalization
@@ -226,6 +246,36 @@ def plot_residuals(
     plt.close()
 
 
+def calculate_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Calculate Mean Absolute Percentage Error (MAPE).
+    
+    MAPE = (100/n) * Σ|y_true - y_pred| / |y_true|
+    
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True values
+    y_pred : np.ndarray
+        Predicted values
+    
+    Returns
+    -------
+    float
+        MAPE value (percentage)
+    """
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    
+    # Avoid division by zero
+    mask = np.abs(y_true) > 1e-8
+    if np.sum(mask) == 0:
+        return np.inf
+    
+    mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+    return mape
+
+
 def print_results_summary(
     train_metrics: dict,
     test_metrics: dict,
@@ -242,11 +292,17 @@ def print_results_summary(
     
     print("\nTraining Metrics:")
     for metric, value in train_metrics.items():
-        print(f"  {metric.upper()}: {value:.6f}")
+        if metric == 'mape':
+            print(f"  {metric.upper()}: {value:.4f}%")
+        else:
+            print(f"  {metric.upper()}: {value:.6f}")
     
     print("\nTest Metrics:")
     for metric, value in test_metrics.items():
-        print(f"  {metric.upper()}: {value:.6f}")
+        if metric == 'mape':
+            print(f"  {metric.upper()}: {value:.4f}%")
+        else:
+            print(f"  {metric.upper()}: {value:.6f}")
     
     print("\n" + "="*80 + "\n")
 
@@ -266,9 +322,15 @@ def main():
     print("="*80)
     print(f"\nConfiguration:")
     print(f"  Data file: {args.data_file}")
+    if args.tenor is not None:
+        print(f"  Tenor: {args.tenor}")
+    if args.maturity is not None:
+        print(f"  Maturity: {args.maturity}")
+    print(f"  Use log returns: {args.use_log_returns}")
     print(f"  Qubits: {args.n_qubits}")
     print(f"  Circuit depth: {args.depth}")
     print(f"  Encoding: {args.encoding}")
+    print(f"  Entanglement: {args.entanglement}")
     print(f"  Lookback window: {args.lookback}")
     print(f"  Regressor: {args.regressor}")
     print(f"  Test size: {args.test_size}")
@@ -296,9 +358,17 @@ def main():
         raise FileNotFoundError(f"Data file not found: {data_file}")
     
     print(f"Loading data from: {data_file}")
+    if args.tenor is not None or args.maturity is not None:
+        print(f"Filtering for Tenor={args.tenor}, Maturity={args.maturity}")
+    if args.use_log_returns:
+        print("Using log returns instead of raw prices")
+    
     X_train, X_test, y_train, y_test = data_loader.prepare_data(
         data_file,
-        price_column=args.price_column
+        price_column=args.price_column,
+        tenor=args.tenor,
+        maturity=args.maturity,
+        use_log_returns=args.use_log_returns
     )
     
     print(f"Training samples: {len(X_train)}")
@@ -353,16 +423,30 @@ def main():
     print("-"*80)
     
     # Training metrics
-    train_metrics = model.evaluate(X_train, y_train)
+    train_metrics = model.evaluate(X_train, y_train, metrics=['mse', 'mae', 'r2', 'rmse'])
+    # Add MAPE
+    train_mape = calculate_mape(y_train, model.predict(X_train))
+    train_metrics['mape'] = train_mape
+    
     print("\nTraining Metrics:")
     for metric, value in train_metrics.items():
-        print(f"  {metric.upper()}: {value:.6f}")
+        if metric == 'mape':
+            print(f"  {metric.upper()}: {value:.4f}%")
+        else:
+            print(f"  {metric.upper()}: {value:.6f}")
     
     # Test metrics
-    test_metrics = model.evaluate(X_test, y_test)
+    test_metrics = model.evaluate(X_test, y_test, metrics=['mse', 'mae', 'r2', 'rmse'])
+    # Add MAPE
+    test_mape = calculate_mape(y_test, model.predict(X_test))
+    test_metrics['mape'] = test_mape
+    
     print("\nTest Metrics:")
     for metric, value in test_metrics.items():
-        print(f"  {metric.upper()}: {value:.6f}")
+        if metric == 'mape':
+            print(f"  {metric.upper()}: {value:.4f}%")
+        else:
+            print(f"  {metric.upper()}: {value:.6f}")
     
     # Generate predictions
     y_train_pred = model.predict(X_train)
@@ -403,8 +487,12 @@ def main():
         'n_qubits': args.n_qubits,
         'circuit_depth': args.depth,
         'encoding': args.encoding,
+        'entanglement': args.entanglement,
         'lookback_window': args.lookback,
         'regressor': args.regressor,
+        'use_log_returns': args.use_log_returns,
+        'tenor': args.tenor,
+        'maturity': args.maturity,
         'training_samples': len(X_train),
         'test_samples': len(X_test)
     }
@@ -421,10 +509,16 @@ def main():
             f.write(f"  {key}: {value}\n")
         f.write("\nTraining Metrics:\n")
         for metric, value in train_metrics.items():
-            f.write(f"  {metric.upper()}: {value:.6f}\n")
+            if metric == 'mape':
+                f.write(f"  {metric.upper()}: {value:.4f}%\n")
+            else:
+                f.write(f"  {metric.upper()}: {value:.6f}\n")
         f.write("\nTest Metrics:\n")
         for metric, value in test_metrics.items():
-            f.write(f"  {metric.upper()}: {value:.6f}\n")
+            if metric == 'mape':
+                f.write(f"  {metric.upper()}: {value:.4f}%\n")
+            else:
+                f.write(f"  {metric.upper()}: {value:.6f}\n")
     
     print(f"Results saved to: {output_dir}")
     print("="*80 + "\n")

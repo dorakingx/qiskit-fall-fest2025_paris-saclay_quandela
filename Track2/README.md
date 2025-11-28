@@ -309,9 +309,10 @@ model = HybridQMLModel(
 
 ## License
 
-This project is developed for the Qiskit Fall Fest Quandela 2 competition.
+Developed for Qiskit Fall Fest 2025 - Paris-Saclay, Quandera Track 2
+
+## Sponsors: A Mila, Quandela, AMF
 
 ## Authors
 
-Developed for Track 2: Quantum Machine Learning
-
+Team Name: Quantum Pioneers

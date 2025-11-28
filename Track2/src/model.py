@@ -7,7 +7,7 @@ Classical Regressor (trainable) for option price prediction.
 
 import numpy as np
 from typing import Optional, Dict, Tuple
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.neural_network import MLPRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
@@ -36,7 +36,7 @@ class HybridQMLModel:
         quantum_reservoir : QuantumReservoir
             The quantum reservoir instance (non-trainable)
         regressor_type : str, default="linear"
-            Type of classical regressor: "linear" or "mlp"
+            Type of classical regressor: "linear", "ridge", or "mlp"
         regressor_params : dict, optional
             Parameters to pass to the regressor
         """
@@ -47,6 +47,14 @@ class HybridQMLModel:
         # Initialize regressor
         if regressor_type == "linear":
             self.regressor = LinearRegression(**self.regressor_params)
+        elif regressor_type == "ridge":
+            # Default Ridge parameters (alpha controls regularization strength)
+            default_ridge_params = {
+                "alpha": 1.0,  # Regularization strength
+                "random_state": 42
+            }
+            default_ridge_params.update(self.regressor_params)
+            self.regressor = Ridge(**default_ridge_params)
         elif regressor_type == "mlp":
             # Default MLP parameters
             default_mlp_params = {
@@ -61,7 +69,7 @@ class HybridQMLModel:
         else:
             raise ValueError(
                 f"Unknown regressor type: {regressor_type}. "
-                "Supported types: 'linear', 'mlp'"
+                "Supported types: 'linear', 'ridge', 'mlp'"
             )
         
         self.is_fitted = False

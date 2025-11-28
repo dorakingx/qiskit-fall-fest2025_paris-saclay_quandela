@@ -64,6 +64,8 @@ class DataLoader:
         """
         Load data from Excel or CSV file.
         
+        Supports both grid format (Tenor × Maturity matrix) and list format.
+        
         Parameters
         ----------
         file_path : str or Path
@@ -94,6 +96,21 @@ class DataLoader:
                 "Supported formats: .xlsx, .xls, .csv"
             )
         
+        # Auto-detect date column
+        if date_column is None:
+            date_candidates = ['Date', 'date', 'DATE', 'Time', 'time', 'TIME']
+            date_column = next(
+                (col for col in date_candidates if col in df.columns),
+                None
+            )
+        
+        # Parse date column if available
+        if date_column and date_column in df.columns:
+            df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+            # Set date as index for time-series operations
+            df = df.set_index(date_column)
+            df = df.sort_index()
+        
         # Auto-detect columns if not specified
         if price_column is None:
             # Try common price column names
@@ -101,15 +118,22 @@ class DataLoader:
                               'swaption_price', 'Value', 'value']
             price_column = next(
                 (col for col in price_candidates if col in df.columns),
-                df.columns[0]  # Default to first column
+                None
             )
-            warnings.warn(
-                f"Price column not specified. Using: {price_column}",
-                UserWarning
-            )
-        
-        if date_column is None and 'Date' in df.columns:
-            date_column = 'Date'
+            if price_column is None:
+                # If no price column found, use first numeric column
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    price_column = numeric_cols[0]
+                    warnings.warn(
+                        f"Price column not specified. Using: {price_column}",
+                        UserWarning
+                    )
+                else:
+                    raise ValueError(
+                        "Could not auto-detect price column. "
+                        f"Available columns: {list(df.columns)}"
+                    )
         
         # Ensure price column exists
         if price_column not in df.columns:
@@ -118,22 +142,96 @@ class DataLoader:
                 f"Available columns: {list(df.columns)}"
             )
         
-        # Select relevant columns
+        # Select relevant columns (keep date index if it exists)
         columns_to_keep = [price_column]
-        if date_column and date_column in df.columns:
-            columns_to_keep.insert(0, date_column)
-        
         df = df[columns_to_keep].copy()
         
-        # Sort by date if available
-        if date_column and date_column in df.columns:
-            df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-            df = df.sort_values(by=date_column).reset_index(drop=True)
-        
         # Remove any rows with NaN values
-        df = df.dropna().reset_index(drop=True)
+        df = df.dropna()
         
         return df
+    
+    def select_tenor_maturity(
+        self,
+        df: pd.DataFrame,
+        tenor: Optional[float] = None,
+        maturity: Optional[float] = None
+    ) -> pd.DataFrame:
+        """
+        Select data for a specific (Tenor, Maturity) pair.
+        
+        Handles both grid format (where columns/rows represent Tenor/Maturity)
+        and list format (where Tenor and Maturity are separate columns).
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input dataframe
+        tenor : float, optional
+            Tenor value to filter by
+        maturity : float, optional
+            Maturity value to filter by
+        
+        Returns
+        -------
+        pd.DataFrame
+            Filtered dataframe for the specified (Tenor, Maturity) pair
+        """
+        if tenor is None and maturity is None:
+            return df
+        
+        # Check if Tenor and Maturity are columns (list format)
+        if 'Tenor' in df.columns and 'Maturity' in df.columns:
+            filtered_df = df.copy()
+            if tenor is not None:
+                filtered_df = filtered_df[filtered_df['Tenor'] == tenor]
+            if maturity is not None:
+                filtered_df = filtered_df[filtered_df['Maturity'] == maturity]
+            return filtered_df
+        
+        # Check if Tenor and Maturity are in index/columns (grid format)
+        # This handles cases where the data is structured as a matrix
+        # with Tenor as rows and Maturity as columns, or vice versa
+        if tenor is not None or maturity is not None:
+            # Try to find columns/rows matching the values
+            # This is a simplified approach - may need adjustment based on actual data format
+            warnings.warn(
+                "Tenor/Maturity filtering for grid format may need manual adjustment. "
+                "Please verify the data structure.",
+                UserWarning
+            )
+        
+        return df
+    
+    def compute_log_returns(self, prices: np.ndarray) -> np.ndarray:
+        """
+        Compute log returns from price series: ln(P_t / P_{t-1}).
+        
+        Log returns are often more stationary and better for financial predictions.
+        
+        Parameters
+        ----------
+        prices : np.ndarray
+            Price series (1D array)
+        
+        Returns
+        -------
+        np.ndarray
+            Log returns series (1D array, length = len(prices) - 1)
+        """
+        prices = np.asarray(prices).flatten()
+        
+        # Ensure all prices are positive
+        if np.any(prices <= 0):
+            raise ValueError(
+                "Cannot compute log returns: prices must be positive. "
+                f"Found {np.sum(prices <= 0)} non-positive values."
+            )
+        
+        # Compute log returns: ln(P_t / P_{t-1})
+        log_returns = np.log(prices[1:] / prices[:-1])
+        
+        return log_returns
     
     def normalize(
         self,
@@ -338,10 +436,13 @@ class DataLoader:
         self,
         file_path: Union[str, Path],
         price_column: Optional[str] = None,
-        date_column: Optional[str] = None
+        date_column: Optional[str] = None,
+        tenor: Optional[float] = None,
+        maturity: Optional[float] = None,
+        use_log_returns: bool = False
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Complete data preparation pipeline: load, normalize, window, split.
+        Complete data preparation pipeline: load, filter, normalize, window, split.
         
         Parameters
         ----------
@@ -351,6 +452,12 @@ class DataLoader:
             Name of the price column
         date_column : str, optional
             Name of the date column
+        tenor : float, optional
+            Tenor value to filter by (for Swaption data)
+        maturity : float, optional
+            Maturity value to filter by (for Swaption data)
+        use_log_returns : bool, default=False
+            If True, use log returns instead of raw prices
         
         Returns
         -------
@@ -360,11 +467,37 @@ class DataLoader:
         # Load data
         df = self.load_data(file_path, price_column, date_column)
         
-        # Extract price column (last column if not specified)
+        # Filter by Tenor/Maturity if specified
+        if tenor is not None or maturity is not None:
+            df = self.select_tenor_maturity(df, tenor, maturity)
+            if len(df) == 0:
+                raise ValueError(
+                    f"No data found for Tenor={tenor}, Maturity={maturity}"
+                )
+        
+        # Extract price column
         if price_column is None:
-            price_column = df.columns[-1]
+            # Find first numeric column (excluding index if it's a date)
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) > 0:
+                price_column = numeric_cols[0]
+            else:
+                raise ValueError("No numeric column found for prices")
         
         prices = df[price_column].values.astype(float)
+        
+        # Compute log returns if requested
+        if use_log_returns:
+            try:
+                prices = self.compute_log_returns(prices)
+                # Note: log returns has one less element, so we need to adjust
+                # For windowing, we'll use the log returns directly
+            except ValueError as e:
+                warnings.warn(
+                    f"Could not compute log returns: {e}. Using raw prices instead.",
+                    UserWarning
+                )
+                use_log_returns = False
         
         # Normalize
         prices_normalized = self.normalize(prices, fit=True)

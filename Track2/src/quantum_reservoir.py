@@ -28,7 +28,8 @@ class QuantumReservoir:
         encoding_type: str = "angle",
         entanglement_pattern: str = "linear",
         random_seed: Optional[int] = None,
-        shots: int = 1024
+        shots: int = 1024,
+        noise_model: Optional[object] = None
     ):
         """
         Initialize the Quantum Reservoir.
@@ -42,24 +43,32 @@ class QuantumReservoir:
         encoding_type : str, default="angle"
             Encoding method: "angle" (angle encoding) or "amplitude" (amplitude encoding)
         entanglement_pattern : str, default="linear"
-            Entanglement pattern: "linear" or "circular"
+            Entanglement pattern: "linear", "circular", or "full"
         random_seed : int, optional
             Random seed for reproducible circuit generation
         shots : int, default=1024
             Number of measurement shots for expectation value estimation
+        noise_model : object, optional
+            Qiskit noise model for simulation. If None, uses clean simulation.
         """
         self.n_qubits = n_qubits
         self.depth = depth
         self.encoding_type = encoding_type
         self.entanglement_pattern = entanglement_pattern
         self.shots = shots
+        self.noise_model = noise_model
         
         if random_seed is not None:
             np.random.seed(random_seed)
         
         # Initialize circuit
         self.circuit: Optional[QuantumCircuit] = None
-        self.simulator = AerSimulator()
+        
+        # Initialize simulator with noise model if provided
+        if noise_model is not None:
+            self.simulator = AerSimulator(noise_model=noise_model)
+        else:
+            self.simulator = AerSimulator()
         
         # Build the reservoir circuit
         self.build_reservoir()
@@ -103,10 +112,17 @@ class QuantumReservoir:
                 if self.n_qubits > 1:
                     self.circuit.cx(self.n_qubits - 1, 0)
             
+            elif self.entanglement_pattern == "full":
+                # Full entanglement: CNOT gates between all pairs (i, j) where i < j
+                # This creates maximum entanglement but is more expensive
+                for i in range(self.n_qubits):
+                    for j in range(i + 1, self.n_qubits):
+                        self.circuit.cx(i, j)
+            
             else:
                 raise ValueError(
                     f"Unknown entanglement pattern: {self.entanglement_pattern}. "
-                    "Supported patterns: 'linear', 'circular'"
+                    "Supported patterns: 'linear', 'circular', 'full'"
                 )
     
     def encode_data(
